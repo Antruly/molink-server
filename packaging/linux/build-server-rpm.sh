@@ -63,6 +63,10 @@ fi
 /opt/molink-server
 /usr/bin/molink-server
 /lib/systemd/system/molink-server.service
+/usr/share/applications/molink-server.desktop
+/usr/share/icons/hicolor/scalable/apps/molink-server.svg
+/usr/share/icons/hicolor/128x128/apps/molink-server.png
+/usr/share/icons/hicolor/256x256/apps/molink-server.png
 SPEC
 
 rpmbuild -bb --define "_topdir $RPMBUILD" \

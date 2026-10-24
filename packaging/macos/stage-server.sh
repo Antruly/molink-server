@@ -52,9 +52,10 @@ install -m 0644 "$ROOT/packaging/macos/molink-server-config.json" \
 install -m 0644 "$ROOT/packaging/macos/com.molink.server.plist" \
   "$STAGE/Library/LaunchDaemons/com.molink.server.plist"
 install -m 0644 "$ROOT/LICENSE" "$STAGE/usr/local/molink-server/LICENSE"
-install -D -m 0644 "$ROOT/packaging/icons/molink-server.svg" \
+mkdir -p "$STAGE/usr/local/molink-server/share/icons"
+install -m 0644 "$ROOT/packaging/icons/molink-server.svg" \
   "$STAGE/usr/local/molink-server/share/icons/molink-server.svg"
-install -D -m 0644 "$ROOT/packaging/icons/molink-server-256.png" \
+install -m 0644 "$ROOT/packaging/icons/molink-server-256.png" \
   "$STAGE/usr/local/molink-server/share/icons/molink-server.png"
 
 LIB=$STAGE/usr/local/molink-server/lib
