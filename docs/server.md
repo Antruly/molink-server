@@ -263,6 +263,47 @@ location / {
 
 ## 7. TLS
 
+设备面与管理面可以分别启用 TLS。证书使用 PEM；私钥不能带密码短语。设备面证书
+必须覆盖客户端连接使用的域名（内置默认目录为 `molink.ssvr.top`），并建议在
+`tls_cert` 文件中放入 **完整链**（站点证书 + 中间证书）。客户端会严格校验证书与
+主机名，自签或私有 CA 需要在客户端额外提供 CA。
+
+### 7.1 配置文件（推荐）
+
+编辑 `/etc/molink-server/config.json`：
+
+```json
+{
+  "device": {
+    "host": "0.0.0.0",
+    "port": 28430,
+    "tls_cert": "/etc/molink-server/device.crt",
+    "tls_key": "/etc/molink-server/device.key"
+  },
+  "admin": {
+    "host": "127.0.0.1",
+    "port": 28431
+  }
+}
+```
+
+```sh
+sudo systemctl restart molink-server
+sudo systemctl status molink-server
+```
+
+文件权限（Linux）：
+
+```sh
+sudo install -m 0644 -o root -g molink-server device.crt /etc/molink-server/
+sudo install -m 0640 -o root -g molink-server device.key /etc/molink-server/
+```
+
+macOS 的服务账户是 `_molink`，Windows 服务以服务账户运行；确保对应账户能读取
+私钥即可。私钥不要放在仓库或 Web 目录中。
+
+### 7.2 命令行
+
 ```sh
 molink-server --tls-cert /etc/molink-server/device.crt \
               --tls-key  /etc/molink-server/device.key \
@@ -270,9 +311,35 @@ molink-server --tls-cert /etc/molink-server/device.crt \
               --admin-tls-key  /etc/molink-server/admin.key
 ```
 
-设备面与管理面可以使用不同证书。TLS 上目前只宣告 HTTP/1.1。管理面绑定非回环
-且未启用 TLS 时启动会告警；显式允许需设置 `allow_insecure_remote` 或
-`--allow-insecure-admin`。
+### 7.3 验证
+
+```sh
+curl -sS https://molink.ssvr.top:28430/healthz
+openssl s_client -connect molink.ssvr.top:28430 \
+  -servername molink.ssvr.top </dev/null 2>/dev/null |
+  openssl x509 -noout -subject -issuer -dates
+```
+
+`/healthz` 应返回 200；证书的 SAN 必须包含 `molink.ssvr.top`。主机名不匹配时
+客户端会直接拒绝连接。
+
+### 7.4 客户端
+
+- 桌面客户端 0.8.1 起默认使用 `https://molink.ssvr.top:28430`；macOS 0.8.1
+  的 dmg 已随包携带 OpenSSL，三端均可直接使用 HTTPS。
+- 自签或私有 CA：在客户端「设置 → 服务端 → 自定义 CA」填写 CA 的 PEM 路径
+  （`server_ca`），不要关闭校验。
+- 开启 TLS 后，仍配置为 `http://` 的旧客户端会连接失败，需要同步改为 HTTPS。
+
+### 7.5 注意
+
+- 设备面 TLS 上只宣告 HTTP/1.1；管理面同样如此。
+- 证书续期后重启服务即可生效。
+- 目录 TLS 只保护注册、心跳、域组和查询；远程会话仍是设备直连，WebSocket
+  当前为明文，需要部署方另行保护。
+
+管理面绑定非回环且未启用 TLS 时启动会告警；显式允许需设置
+`allow_insecure_remote` 或 `--allow-insecure-admin`。
 
 ## 8. 权限与首次管理员
 
