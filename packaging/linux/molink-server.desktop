@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=moLink Server
+Name[zh_CN]=moLink Server 管理控制台
+Comment=Open the moLink Server admin console
+Comment[zh_CN]=打开 moLink Server 管理控制台
+Exec=xdg-open http://127.0.0.1:28431
+Icon=molink-server
+Terminal=false
+Categories=Network;
+Keywords=molink;server;admin;

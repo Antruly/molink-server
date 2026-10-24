@@ -30,7 +30,7 @@ cp "$ROOT/packaging/windows/install-service.cmd" "$PKG/"
 cp "$ROOT/packaging/windows/uninstall-service.cmd" "$PKG/"
 cp "$ROOT/LICENSE" "$PKG/LICENSE.txt"
 cp "$ROOT/packaging/windows/server-README.txt" "$PKG/README.txt"
-cp "$ROOT/packaging/windows/molink.ico" "$PKG/molink.ico" 2>/dev/null || true
+cp "$ROOT/packaging/icons/molink-server.ico" "$PKG/molink.ico"
 
 if [ -n "${UVCPP_LIB_DIR:-}" ] && [ -d "$UVCPP_LIB_DIR" ]; then
   cp "$UVCPP_LIB_DIR"/*.dll "$PKG/" 2>/dev/null || true

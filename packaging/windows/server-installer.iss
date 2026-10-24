@@ -22,7 +22,7 @@ AppId={{8C6C0D2E-4B7B-4F1E-9C3A-2F7A9E1D5B60}
 AppName=moLink Server
 AppVersion={#AppVersion}
 AppPublisher=moLink
-AppPublisherURL=https://github.com/Antruly/molink
+AppPublisherURL=https://github.com/Antruly/molink-server
 DefaultDirName={autopf}\moLink Server
 DefaultGroupName=moLink Server
 OutputDir={#OutputDir}
@@ -35,7 +35,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
 UninstallDisplayName=moLink Server
-UninstallDisplayIcon={app}\molink-server.exe
+UninstallDisplayIcon={app}\molink.ico
+SetupIconFile={#PkgDir}\molink.ico
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "{#LangFile}"

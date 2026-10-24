@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="packaging/icons/molink-server.svg" width="96" alt="moLink Server icon">
+</p>
+
 # moLink Server
 
 moLink 的设备目录与自托管管理服务：客户端在这里注册与心跳，按设备 ID 或域组

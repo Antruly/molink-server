@@ -27,6 +27,10 @@ rm -f "$UNIT"
 systemctl daemon-reload 2>/dev/null || true
 rm -rf "$PREFIX"
 rm -f /usr/local/bin/molink-server /usr/bin/molink-server
+rm -f /usr/share/applications/molink-server.desktop
+rm -f /usr/share/icons/hicolor/scalable/apps/molink-server.svg
+rm -f /usr/share/icons/hicolor/128x128/apps/molink-server.png
+rm -f /usr/share/icons/hicolor/256x256/apps/molink-server.png
 
 if [ "$PURGE" -eq 1 ]; then
   rm -rf "$CONFIG" "$DATA" /var/log/molink-server

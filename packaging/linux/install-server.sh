@@ -55,6 +55,15 @@ install -d "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/share/web-admin"
 cp -a "$HERE/opt/molink-server/." "$PREFIX/"
 ln -sf "$PREFIX/bin/molink-server" /usr/local/bin/molink-server
 
+if [ -d "$HERE/usr/share/icons" ]; then
+  install -d /usr/share/icons
+  cp -a "$HERE/usr/share/icons/." /usr/share/icons/
+fi
+if [ -f "$HERE/usr/share/applications/molink-server.desktop" ]; then
+  install -D -m 0644 "$HERE/usr/share/applications/molink-server.desktop" \
+    /usr/share/applications/molink-server.desktop
+fi
+
 install -d "$(dirname "$CONFIG")"
 if [ ! -f "$CONFIG" ]; then
   install -m 0644 "$HERE/etc/molink-server/config.json" "$CONFIG"

@@ -56,4 +56,22 @@ install -m 0755 "$ROOT/packaging/linux/install-server.sh" "$STAGE/install.sh"
 install -m 0755 "$ROOT/packaging/linux/uninstall-server.sh" "$STAGE/uninstall.sh"
 ln -sf ../opt/molink-server/bin/molink-server "$STAGE/usr/bin/molink-server"
 
+# Icon for the admin-console desktop entry, plus a copy inside the install tree
+# so tarball installs and package managers carry the same artwork.
+for dir in hicolor/scalable/apps hicolor/128x128/apps hicolor/256x256/apps; do
+  mkdir -p "$STAGE/usr/share/icons/$dir"
+done
+install -m 0644 "$ROOT/packaging/icons/molink-server.svg" \
+  "$STAGE/usr/share/icons/hicolor/scalable/apps/molink-server.svg"
+install -m 0644 "$ROOT/packaging/icons/molink-server-128.png" \
+  "$STAGE/usr/share/icons/hicolor/128x128/apps/molink-server.png"
+install -m 0644 "$ROOT/packaging/icons/molink-server-256.png" \
+  "$STAGE/usr/share/icons/hicolor/256x256/apps/molink-server.png"
+install -D -m 0644 "$ROOT/packaging/linux/molink-server.desktop" \
+  "$STAGE/usr/share/applications/molink-server.desktop"
+install -D -m 0644 "$ROOT/packaging/icons/molink-server.svg" \
+  "$STAGE/opt/molink-server/share/icons/molink-server.svg"
+install -D -m 0644 "$ROOT/packaging/icons/molink-server-256.png" \
+  "$STAGE/opt/molink-server/share/icons/molink-server.png"
+
 echo "staged $STAGE (version $VERSION)"

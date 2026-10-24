@@ -74,6 +74,8 @@ tar.gz 解压后以 root 运行：
 | `/etc/molink-server/config.json` | 配置文件（deb conffile / rpm noreplace） |
 | `/var/lib/molink-server` | SQLite 数据库等数据（0700，`molink-server` 用户） |
 | `/var/log/molink-server/server.log` | 运行日志（20 MiB × 5 轮转） |
+| `/usr/share/icons/hicolor/{scalable,128x128,256x256}/apps/molink-server.*` | 服务端图标 |
+| `/usr/share/applications/molink-server.desktop` | 「moLink Server 管理控制台」快捷方式 |
 
 Linux 包依赖系统 `libssl3`、`libuv1`、`zlib1g`；PostgreSQL 客户端库按需安装
 （`libpq5`），仅当选择 PostgreSQL 驱动时用到。
@@ -87,7 +89,8 @@ Linux 包依赖系统 `libssl3`、`libuv1`、`zlib1g`；PostgreSQL 客户端库�
   以管理员运行 `install-service.cmd` 注册服务。
 
 服务名 `moLinkServer`，自动（延迟）启动；日志与数据库默认在
-`C:\ProgramData\moLink\Server`。包内尽可能附带 OpenSSL 与 VC++ 运行库；
+`C:\ProgramData\moLink\Server`。安装包与开始菜单快捷方式使用 `molink.ico`
+（服务端图标）。包内尽可能附带 OpenSSL 与 VC++ 运行库；
 若目标机器提示缺少 `VCRUNTIME140`/`MSVCP140`，安装 Microsoft Visual C++
 Redistributable 即可。
 
@@ -99,6 +102,7 @@ Redistributable 即可。
   `/Library/LaunchDaemons/com.molink.server.plist` 并启动。
 - 配置 `/usr/local/etc/molink-server/config.json`，数据
   `/usr/local/var/molink-server`，日志 `/usr/local/var/log/molink-server`。
+- 图标随包安装到 `/usr/local/molink-server/share/icons/`。
 
 未签名 pkg 受 Gatekeeper 限制：可右键“打开”，或在终端执行
 `xattr -d com.apple.quarantine <pkg>`。正式分发需要 Developer ID 与公证，后续补。

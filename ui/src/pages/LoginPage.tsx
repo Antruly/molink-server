@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { LogIn, Server } from 'lucide-react'
+import { LogIn } from 'lucide-react'
 import { ApiError, api, type AuthResult } from '../lib/api'
 import { Field } from '../components/ui'
 
@@ -34,9 +34,12 @@ export function LoginPage({ onAuthed }: { onAuthed: (result: AuthResult) => void
     <div className="grid min-h-screen place-items-center p-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-accent-soft text-accent">
-            <Server size={26} />
-          </span>
+          <img
+            src="/favicon.svg"
+            alt=""
+            className="mx-auto h-16 w-16"
+            draggable={false}
+          />
           <h1 className="mt-3 text-xl font-semibold text-ink">moLink Server</h1>
           <p className="mt-1 text-[12px] text-muted">登录管理控制台</p>
         </div>

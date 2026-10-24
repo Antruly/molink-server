@@ -7,7 +7,6 @@ import {
   MonitorSmartphone,
   Moon,
   ScrollText,
-  Server,
   Settings as SettingsIcon,
   ShieldCheck,
   Sun,
@@ -150,7 +149,12 @@ export default function App() {
     return (
       <div className="grid min-h-screen place-items-center p-6">
         <div className="card max-w-sm text-center">
-          <Server size={28} className="mx-auto mb-3 text-accent" />
+          <img
+            src="/favicon.svg"
+            alt=""
+            className="mx-auto mb-3 h-12 w-12"
+            draggable={false}
+          />
           <div className="text-[15px] font-semibold text-ink">无法连接服务端</div>
           <p className="mt-2 text-[12px] leading-relaxed text-muted">{loadError}</p>
           <button type="button" className="btn btn-primary mt-4" onClick={() => void refresh()}>
@@ -185,9 +189,12 @@ export default function App() {
           }
         >
           <div className="mb-6 flex items-center gap-2 px-1">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent-soft text-accent">
-              <Server size={18} />
-            </span>
+            <img
+              src="/favicon.svg"
+              alt=""
+              className="h-9 w-9 shrink-0"
+              draggable={false}
+            />
             <div className="min-w-0">
               <div className="text-[14px] font-semibold text-ink">moLink Server</div>
               <div className="text-[10px] text-muted">管理控制台</div>
