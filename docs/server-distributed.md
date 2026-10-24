@@ -62,7 +62,7 @@
 {
   "node_id": 7,
   "node_uuid": "...",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "applied_revision": 42,
   "devices": {"total": 120, "online": 87},
   "requests_per_minute": 240,
@@ -88,9 +88,10 @@
 
 ## 7. 代码同步与仓库结构
 
-- 开源仓库的 `server/` 是唯一事实来源；Pro 仓库只包含 `pro/` 与部署清单。
-- Pro 通过 git subtree/submodule 或定期 merge `v*` 标签同步开源代码；
-  CI 校验 `server/` 下的文件哈希未被 Pro 修改。
+- 本仓库（Antruly/molink-server）是服务端的唯一事实来源；Pro 仓库只包含 `pro/`
+  与部署清单。服务端已于 0.2.1 从客户端仓库拆分，两边不再共享版本线。
+- Pro 通过 git subtree/submodule 或定期 merge 本仓库的 `v*` 标签同步开源代码；
+  CI 校验本仓库的文件哈希未被 Pro 修改。
 - 开源版提供的扩展点（第三阶段实现）：
   - 配置的 revision/校验/回滚接口；
   - 状态快照（设备数、在线数、限速命中、封禁数）；

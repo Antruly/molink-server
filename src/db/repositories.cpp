@@ -211,7 +211,8 @@ bool device_repository::heartbeat(uvcpp::uvcpp_db_client& client,
       "UPDATE devices SET last_seen_ms = " + dialect.placeholder(1) +
       ", address = COALESCE(NULLIF(" + dialect.placeholder(2) +
       ", ''), address), peer_ip = " + dialect.placeholder(3) +
-      ", port = " + dialect.placeholder(4) + ", version = COALESCE(NULLIF(" +
+      ", port = COALESCE(NULLIF(" + dialect.placeholder(4) +
+      ", 0), port), version = COALESCE(NULLIF(" +
       dialect.placeholder(5) + ", ''), version), name = COALESCE(NULLIF(" +
       dialect.placeholder(6) + ", ''), name), platform = COALESCE(NULLIF(" +
       dialect.placeholder(7) + ", ''), platform), avatar = COALESCE(NULLIF(" +

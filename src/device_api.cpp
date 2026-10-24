@@ -220,6 +220,8 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
     body["endpoints"]["register"] = "POST /v1/devices/register";
     body["endpoints"]["heartbeat"] = "POST /v1/devices/heartbeat";
     body["endpoints"]["lookup"] = "GET /v1/devices?id=ABC-DEF-GHJ";
+    body["endpoints"]["domain"] = "POST /v1/devices/domain";
+    body["endpoints"]["domain_devices"] = "GET /v1/devices/domain";
     body["endpoints"]["unregister"] = "POST /v1/devices/unregister";
     send_json(response, 200, body);
   });

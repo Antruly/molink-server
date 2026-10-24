@@ -109,6 +109,14 @@ int main() {
                           "192.168.1.20", "127.0.0.1", 28418, "0.8.1",
                           "Renamed", "linux", "", heartbeat_found, err));
   CHECK(heartbeat_found);
+  // Omitting the port (0) must not clear the registered one.
+  CHECK(devices.heartbeat(*client, dialect, device.id, device.token_hash, "",
+                          "127.0.0.1", 0, "", "", "", "", heartbeat_found,
+                          err));
+  CHECK(heartbeat_found);
+  device_record refreshed;
+  CHECK(devices.find(*client, dialect, device.id, refreshed, err));
+  CHECK(refreshed.port == 28418);
   CHECK(!devices.heartbeat(*client, dialect, device.id, "wrong-token", "", "",
                            0, "", "", "", "", heartbeat_found, err) ||
         !heartbeat_found);

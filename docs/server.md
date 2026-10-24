@@ -4,7 +4,8 @@
 客户端通过设备 ID 查询地址后直连；同时提供独立的 Web 管理控制台、账号体系、
 IP 来源策略、请求限速、临时封禁和审计日志。
 
-本仓库独立于桌面端发布，使用 `v*` 标签；当前版本 `0.2.1`。
+本仓库独立于桌面端发布，使用 `v*` 标签；当前版本 `0.2.1`。设备 API 的字段、
+错误码、限速与请求示例见 [device-api.md](device-api.md)。
 
 ## 1. 端口与组成
 
@@ -30,7 +31,8 @@ IP 来源策略、请求限速、临时封禁和审计日志。
 - `POST /v1/devices/domain`，JSON 体 `{id, token, action, code?}`：
   - `join`：加入 `code` 指定的域组；码不存在或已撤销时返回 404 `unknown_domain`
   - `rotate`：为当前设备签发新码。若当前码属于该设备，旧码立即撤销；旧成员下次
-    心跳收到 `domain_valid=false`，查询返回 `unknown_domain`
+    心跳收到 `domain_valid=false`，查询返回 `unknown_domain`。若设备只是加入者，
+    旧组保持不变，本设备退出并获得自己的新码
   - `leave`：退出域组，不再出现在同组列表中
 - `GET /v1/devices/domain?id=<ID>&token=<TOKEN>`：返回与调用者同域组的其他设备
   （最多 100 台，含在线状态与连接地址）。非成员或已撤销的码返回 404。
@@ -44,9 +46,9 @@ IP 来源策略、请求限速、临时封禁和审计日志。
 系统用户、数据目录并 `systemctl enable --now`：
 
 ```sh
-sudo dpkg -i molink-server_0.2.0_amd64.deb
+sudo dpkg -i molink-server_0.2.1_amd64.deb
 # 或
-sudo rpm -i molink-server-0.2.0-1.x86_64.rpm
+sudo rpm -i molink-server-0.2.1-1.x86_64.rpm
 
 systemctl status molink-server
 journalctl -u molink-server -f
@@ -78,7 +80,7 @@ Linux 包依赖系统 `libssl3`、`libuv1`、`zlib1g`；PostgreSQL 客户端库�
 
 ### Windows
 
-- 安装器 `moLink-Server-0.2.0-setup-x64.exe`：可选“安装为 Windows 服务”（默认勾选）、
+- 安装器 `moLink-Server-0.2.1-setup-x64.exe`：可选“安装为 Windows 服务”（默认勾选）、
   可选防火墙放行 28430、可选管理面绑定 `0.0.0.0`。配置写入
   `C:\ProgramData\moLink\Server\config.json`，卸载时保留数据。
 - 便携 zip：解压到固定目录后运行 `molink-server.exe --config config.json`；
@@ -91,7 +93,7 @@ Redistributable 即可。
 
 ### macOS
 
-- `moLink-Server-0.2.0-arm64.pkg` / `x64.pkg`（未签名）与对应的
+- `moLink-Server-0.2.1-arm64.pkg` / `x64.pkg`（未签名）与对应的
   `macos-<arch>.tar.gz`。
 - pkg 安装到 `/usr/local/molink-server`，创建 `_molink` 用户，注册
   `/Library/LaunchDaemons/com.molink.server.plist` 并启动。
@@ -129,7 +131,7 @@ sudo launchctl bootout system/com.molink.server
 
 ## 4. 配置
 
-优先级：**命令行 > 配置文件 > 环境变量 > 内置默认值**。配置文件为 JSON，
+优先级：**命令行 > 环境变量 > 配置文件 > 内置默认值**。配置文件为 JSON，
 通过 `--config` 指定；环境变量 `MOLINK_SERVER_CONFIG` 也可给出路径。
 
 ```json
@@ -294,6 +296,13 @@ molink-server --tls-cert /etc/molink-server/device.crt \
 旧版（0.1.x）的 `devices.json` 目录会在首次启动时导入到数据库；导入后文件会
 改名为 `devices.json.imported.<时间戳>`，保留原文件以便回退。
 
+0.2.1 的迁移（schema 第 5 版）为设备表增加 `platform`、`avatar`、`domain_code`，
+并新建 `domains` 表。已有设备升级后 `domain_code` 为空，下一次心跳只会上报元数据，
+不会自动分码；需要域组时在客户端点一次「更新域组码」即可。设备 ID、token 与
+注册记录不受影响，无需重新注册。
+
+回退到旧版本前请先恢复对应数据库备份：旧二进制不认识新的列与 `domains` 表。
+
 ## 11. 故障排查
 
 | 现象 | 处理 |
@@ -312,5 +321,9 @@ molink-server --tls-cert /etc/molink-server/device.crt \
 
 - 设计目标为单机自托管、约一万台设备；SQLite 足够；更大规模建议 PostgreSQL。
 - 目录只负责寻址，远程会话仍需要对方验证码或人工批准；目前没有中继。
+- 地址查询按 9 位设备 ID 公开；设备 ID 应按凭据对待。
+- 域组列表单次最多返回 100 台（不含调用者）；码只能由服务端生成，撤销后不可恢复。
+- 同一 IP 最多注册 50 台设备；注册、心跳、查询与域组操作均有限速，见
+  [device-api.md §限速](device-api.md#限速)。
 - 分布式/多节点管理属于第三阶段（Pro），见
   [server-distributed.md](server-distributed.md)。
