@@ -6,7 +6,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <string>
+#include <vector>
 
 #include "logging.h"
 #include "version.h"
@@ -19,6 +21,19 @@ using nlohmann::json;
 std::string env_string(const char* name) {
   const char* value = std::getenv(name);
   return value == nullptr ? std::string() : std::string(value);
+}
+
+/// First regular file from @p names inside @p dir, or empty.
+std::string first_existing(const std::filesystem::path& dir,
+                           std::initializer_list<const char*> names) {
+  std::error_code ec;
+  for (const char* name : names) {
+    const std::filesystem::path candidate = dir / name;
+    if (std::filesystem::is_regular_file(candidate, ec)) {
+      return candidate.string();
+    }
+  }
+  return std::string();
 }
 
 bool parse_int_arg(const char* text, int& out) {
@@ -133,6 +148,10 @@ void apply_environment(server_config& cfg) {
   apply("MOLINK_SERVER_LOG_FILE", cfg.log.file);
   apply("MOLINK_SERVER_UI_DIR", cfg.admin.web_root);
   apply("MOLINK_SERVER_SETUP_TOKEN", cfg.setup_token);
+  apply("MOLINK_SERVER_TLS_CERT", cfg.device.tls_cert);
+  apply("MOLINK_SERVER_TLS_KEY", cfg.device.tls_key);
+  apply("MOLINK_SERVER_ADMIN_TLS_CERT", cfg.admin.tls_cert);
+  apply("MOLINK_SERVER_ADMIN_TLS_KEY", cfg.admin.tls_key);
   apply("MOLINK_SERVER_DB_DRIVER", cfg.database.driver);
   apply("MOLINK_SERVER_DB_URL", cfg.database.url);
   apply_int("MOLINK_SERVER_DB_POOL_MIN", cfg.database.pool_min);
@@ -331,6 +350,14 @@ bool parse_config(int argc, char** argv, server_config& out, std::string& err) {
   for (int i = 1; i + 1 < argc; ++i) {
     if (std::strcmp(argv[i], "--config") == 0) config_path = argv[i + 1];
   }
+  // Portable installs are often started by double-clicking the binary; read
+  // ./config.json when no explicit path was given.
+  if (config_path.empty()) {
+    std::error_code ec;
+    if (std::filesystem::is_regular_file("config.json", ec)) {
+      config_path = "config.json";
+    }
+  }
   if (!config_path.empty()) {
     cfg.config_path = config_path;
     if (!apply_json(config_path, cfg, err)) return false;
@@ -339,6 +366,31 @@ bool parse_config(int argc, char** argv, server_config& out, std::string& err) {
   apply_environment(cfg);
   if (!parse_cli(argc, argv, cfg, err)) return false;
   if (cfg.config_path.empty()) cfg.config_path = env_string("MOLINK_SERVER_CONFIG");
+
+  // Opt-in convention: put fullchain.pem/privkey.pem (or cert.pem/key.pem)
+  // into a tls/ directory next to the config file or in the data directory and
+  // the service picks them up at startup without editing JSON.
+  if (cfg.device.tls_cert.empty() && cfg.device.tls_key.empty()) {
+    std::vector<std::filesystem::path> dirs;
+    if (!cfg.config_path.empty()) {
+      dirs.push_back(std::filesystem::path(cfg.config_path).parent_path() / "tls");
+    }
+    if (!cfg.data_dir.empty()) {
+      dirs.push_back(std::filesystem::path(cfg.data_dir) / "tls");
+    }
+    for (const std::filesystem::path& dir : dirs) {
+      const std::string cert =
+          first_existing(dir, {"fullchain.pem", "cert.pem"});
+      const std::string key =
+          first_existing(dir, {"privkey.pem", "key.pem"});
+      if (!cert.empty() && !key.empty()) {
+        cfg.device.tls_cert = cert;
+        cfg.device.tls_key = key;
+        break;
+      }
+    }
+  }
+
   if (!validate(cfg, err)) return false;
   if (cfg.database.url.empty()) {
     if (cfg.database.driver != "sqlite") {

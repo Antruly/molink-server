@@ -136,7 +136,9 @@ sudo launchctl bootout system/com.molink.server
 ## 4. 配置
 
 优先级：**命令行 > 环境变量 > 配置文件 > 内置默认值**。配置文件为 JSON，
-通过 `--config` 指定；环境变量 `MOLINK_SERVER_CONFIG` 也可给出路径。
+通过 `--config` 指定；环境变量 `MOLINK_SERVER_CONFIG` 也可给出路径。两者都
+没有给出时，服务会读取**当前工作目录下的 `config.json`**（便携包/双击启动的
+场景）；仍找不到就只使用环境变量与内置默认值。
 
 ```json
 {
@@ -186,7 +188,9 @@ sudo launchctl bootout system/com.molink.server
 `MOLINK_SERVER_DB_DRIVER`、`MOLINK_SERVER_DB_URL`、`MOLINK_SERVER_DB_POOL_MIN`、
 `MOLINK_SERVER_DB_POOL_MAX`、`MOLINK_SERVER_DB_BUSY_TIMEOUT_MS`、
 `MOLINK_SERVER_LOG_LEVEL`、`MOLINK_SERVER_LOG_FILE`、`MOLINK_SERVER_UI_DIR`、
-`MOLINK_SERVER_SETUP_TOKEN`、`MOLINK_SERVER_ADMIN_ALLOW_INSECURE`。
+`MOLINK_SERVER_SETUP_TOKEN`、`MOLINK_SERVER_ADMIN_ALLOW_INSECURE`、
+`MOLINK_SERVER_TLS_CERT`、`MOLINK_SERVER_TLS_KEY`、
+`MOLINK_SERVER_ADMIN_TLS_CERT`、`MOLINK_SERVER_ADMIN_TLS_KEY`。
 
 管理页里的「安全策略」和「服务目录」会写回数据库并即时生效；监听地址、端口、
 TLS、数据库连接和 UI 目录属于启动配置，修改后需要重启服务。
@@ -267,6 +271,19 @@ location / {
 必须覆盖客户端连接使用的域名（内置默认目录为 `molink.ssvr.top`），并建议在
 `tls_cert` 文件中放入 **完整链**（站点证书 + 中间证书）。客户端会严格校验证书与
 主机名，自签或私有 CA 需要在客户端额外提供 CA。
+
+### 7.0 目录约定（不改 JSON）
+
+不想在配置里写绝对路径时，把文件放到下面任意一个 `tls/` 目录，服务启动时会
+自动发现并启用 TLS：
+
+```text
+<config.json 所在目录>/tls/fullchain.pem  + privkey.pem
+<data_dir>/tls/fullchain.pem              + privkey.pem
+```
+
+也接受 `cert.pem` + `key.pem` 这组文件名。显式配置（命令行 / 环境变量 /
+JSON）优先于目录发现；只找到其中一个文件时不会启用 TLS，服务照常以 HTTP 启动。
 
 ### 7.1 配置文件（推荐）
 

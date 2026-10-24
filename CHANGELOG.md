@@ -14,6 +14,11 @@ moLink Server 使用本仓库的 `v*` 标签发布，与桌面客户端
   `unknown_domain`
 - `GET /v1/devices?ids=` 批量查询（最多 20 个 ID）
 - 管理控制台显示设备平台与所属域组码
+- 未指定 `--config` / `MOLINK_SERVER_CONFIG` 时自动读取当前目录的 `config.json`
+- 新增 `MOLINK_SERVER_TLS_CERT` / `MOLINK_SERVER_TLS_KEY`（及管理面对应变量）
+  环境变量
+- 目录约定：把 `fullchain.pem`/`privkey.pem`（或 `cert.pem`/`key.pem`）放进
+  `<配置目录>/tls/` 或 `<data_dir>/tls/`，启动时自动启用 TLS
 
 ### Changed
 

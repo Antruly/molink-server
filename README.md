@@ -114,6 +114,17 @@ cd ui && pnpm install --frozen-lockfile && pnpm build
 [docs/server.md §4-§7](docs/server.md#4-配置)。管理页中的安全策略与服务目录
 写回数据库并即时生效；监听地址、端口、TLS 与数据库连接需要重启。
 
+未指定 `--config` / `MOLINK_SERVER_CONFIG` 时，服务会读取当前目录的
+`config.json`。启用 TLS 最简单的做法是把证书放进目录，不用改 JSON：
+
+```text
+<config.json 所在目录>/tls/fullchain.pem + privkey.pem
+<data_dir>/tls/fullchain.pem             + privkey.pem
+```
+
+也接受 `cert.pem` + `key.pem`；也可用 `MOLINK_SERVER_TLS_CERT` /
+`MOLINK_SERVER_TLS_KEY` 环境变量。显式配置优先于目录自动发现。
+
 ## 设备 API
 
 | 方法 | 路径 | 说明 | 鉴权 |
