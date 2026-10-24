@@ -15,6 +15,10 @@ struct device_record {
   std::string peer_ip;
   int port = 0;
   std::string version;
+  std::string platform;
+  std::string avatar;
+  /// 9-character group code issued by the directory. Empty means none.
+  std::string domain_code;
   std::uint64_t created_ms = 0;
   std::uint64_t last_seen_ms = 0;
 };

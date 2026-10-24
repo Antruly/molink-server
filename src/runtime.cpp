@@ -120,7 +120,7 @@ bool server_runtime::initialize(std::string& error) {
       .set_server_header(std::string(MOLINK_SERVER_PRODUCT) + "/" +
                          MOLINK_SERVER_VERSION)
       .set_access_log(false)
-      .set_max_body_size(64u * 1024u)
+      .set_max_body_size(128u * 1024u)
       .set_http2_enabled(false);
   if (!config_.device.tls_cert.empty()) {
     device_app_.enable_ssl(config_.device.tls_cert, config_.device.tls_key);

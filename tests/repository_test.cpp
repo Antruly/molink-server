@@ -107,19 +107,73 @@ int main() {
   bool heartbeat_found = false;
   CHECK(devices.heartbeat(*client, dialect, device.id, device.token_hash,
                           "192.168.1.20", "127.0.0.1", 28418, "0.8.1",
-                          heartbeat_found, err));
+                          "Renamed", "linux", "", heartbeat_found, err));
   CHECK(heartbeat_found);
   CHECK(!devices.heartbeat(*client, dialect, device.id, "wrong-token", "", "",
-                           0, "", heartbeat_found, err) ||
+                           0, "", "", "", "", heartbeat_found, err) ||
         !heartbeat_found);
+
+  // --- domains -----------------------------------------------------------
+  std::string domain;
+  CHECK(devices.create_domain(*client, dialect, device.id, domain, err));
+  CHECK(domain.size() == 9);
+  bool joined = false;
+  bool code_valid = false;
+  CHECK(devices.join_domain(*client, dialect, device.id, device.token_hash,
+                            domain, joined, code_valid, err));
+  CHECK(joined && code_valid);
+  std::string current_domain;
+  bool domain_valid = false;
+  CHECK(devices.domain_for_device(*client, dialect, device.id, current_domain,
+                                  domain_valid, err));
+  CHECK(current_domain == domain && domain_valid);
+
+  device_record second;
+  second.token_hash = "second-device-token";
+  second.name = "Field";
+  second.peer_ip = "127.0.0.1";
+  second.port = 28419;
+  CHECK(devices.insert(*client, dialect, second, err));
+  CHECK(devices.join_domain(*client, dialect, second.id, second.token_hash,
+                            domain, joined, code_valid, err));
+  CHECK(joined && code_valid);
+
+  std::vector<device_record> peers;
+  CHECK(devices.list_domain_devices(*client, dialect, domain, device.id, 100,
+                                    peers, err));
+  CHECK(peers.size() == 1 && peers.front().id == second.id);
+
+  // Rotating the owner's code revokes it for every member.
+  std::string rotated;
+  CHECK(devices.rotate_domain(*client, dialect, device.id, device.token_hash,
+                              rotated, joined, err));
+  CHECK(joined && rotated.size() == 9 && rotated != domain);
+  CHECK(devices.domain_for_device(*client, dialect, second.id, current_domain,
+                                  domain_valid, err));
+  CHECK(current_domain == domain && !domain_valid);
+  CHECK(devices.join_domain(*client, dialect, second.id, second.token_hash,
+                            domain, joined, code_valid, err));
+  CHECK(joined && !code_valid);
+  CHECK(devices.join_domain(*client, dialect, second.id, second.token_hash,
+                            rotated, joined, code_valid, err));
+  CHECK(joined && code_valid);
+  CHECK(devices.list_domain_devices(*client, dialect, rotated, device.id, 100,
+                                    peers, err));
+  CHECK(peers.size() == 1 && peers.front().id == second.id);
 
   device_query query;
   query.page = 1;
   query.page_size = 10;
   device_page page;
   CHECK(devices.list(*client, dialect, query, 90000, epoch_ms(), page, err));
-  CHECK(page.total == 1);
-  CHECK(page.items.size() == 1 && page.items.front().name == "Office");
+  CHECK(page.total == 2);
+  bool saw_renamed = false;
+  for (const device_record& item : page.items) {
+    if (item.name != "Renamed") continue;
+    saw_renamed = true;
+    CHECK(item.platform == "linux");
+  }
+  CHECK(saw_renamed);
 
   ban_record ban;
   ban.id = "ban_test";

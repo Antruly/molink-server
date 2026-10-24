@@ -52,6 +52,9 @@ export interface Device {
   peer_ip: string
   port: number
   version: string
+  platform: string
+  avatar: string
+  domain: string
   online: boolean
   created_ms: number
   last_seen_ms: number

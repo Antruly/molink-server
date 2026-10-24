@@ -20,8 +20,9 @@ class device_repository {
   bool heartbeat(uvcpp::uvcpp_db_client& client, const sql_dialect& dialect,
                  const std::string& id, const std::string& token_hash,
                  const std::string& address, const std::string& peer_ip, int port,
-                 const std::string& version, bool& found,
-                 std::string& err) const;
+                 const std::string& version, const std::string& name,
+                 const std::string& platform, const std::string& avatar,
+                 bool& found, std::string& err) const;
   bool remove(uvcpp::uvcpp_db_client& client, const sql_dialect& dialect,
               const std::string& id, const std::string& token_hash,
               bool& found) const;
@@ -35,6 +36,45 @@ class device_repository {
   bool count_for_ip(uvcpp::uvcpp_db_client& client, const sql_dialect& dialect,
                     const std::string& peer_ip, std::size_t& out,
                     std::string& err) const;
+
+  // ------------------------------------------------------------- domains ---
+  // A domain code is the walkie-talkie-style group ("channel"). Only the
+  // directory issues them; a client joins one by entering a code it was given.
+
+  /// Creates a fresh, unique 9-character code owned by @p owner_id.
+  bool create_domain(uvcpp::uvcpp_db_client& client, const sql_dialect& dialect,
+                     const std::string& owner_id, std::string& code,
+                     std::string& err) const;
+  /// The device's current code and whether the domain is still unrevoked.
+  bool domain_for_device(uvcpp::uvcpp_db_client& client,
+                         const sql_dialect& dialect, const std::string& id,
+                         std::string& code, bool& valid,
+                         std::string& err) const;
+  /// Binds an authenticated device to an existing, unrevoked code.
+  bool join_domain(uvcpp::uvcpp_db_client& client, const sql_dialect& dialect,
+                   const std::string& id, const std::string& token_hash,
+                   const std::string& code, bool& found, bool& code_valid,
+                   std::string& err) const;
+  /// Issues a new code to the device. The code it owned is revoked, which
+  /// invalidates every device that joined it.
+  bool rotate_domain(uvcpp::uvcpp_db_client& client, const sql_dialect& dialect,
+                     const std::string& id, const std::string& token_hash,
+                     std::string& code, bool& found,
+                     std::string& err) const;
+  bool clear_domain(uvcpp::uvcpp_db_client& client, const sql_dialect& dialect,
+                    const std::string& id, const std::string& token_hash,
+                    bool& found, std::string& err) const;
+  /// Devices sharing @p code, excluding @p exclude_id.
+  bool list_domain_devices(uvcpp::uvcpp_db_client& client,
+                           const sql_dialect& dialect, const std::string& code,
+                           const std::string& exclude_id, std::size_t limit,
+                           std::vector<device_record>& out,
+                           std::string& err) const;
+  /// Finds a device only when the token matches its hash.
+  bool find_authorized(uvcpp::uvcpp_db_client& client,
+                       const sql_dialect& dialect, const std::string& id,
+                       const std::string& token_hash, device_record& out,
+                       bool& found, std::string& err) const;
 };
 
 class user_repository {

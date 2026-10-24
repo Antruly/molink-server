@@ -3,7 +3,7 @@
 // Source: https://ftp.apnic.net/stats/apnic/delegated-apnic-latest
 // Snapshot: 2026-10-24
 // Source SHA-256: 7bd5044f43133345fe2efee0aca151ba2ee2b70c9af6cb9aaa88d85bcb350b33
-// Regenerate with: python3 -I server/tools/gen-cn-cidr.py
+// Regenerate with: python3 -I tools/gen-cn-cidr.py
 
 static constexpr cn_range kCnRanges[] = {
     {0x01000100u, 0x010003ffu},

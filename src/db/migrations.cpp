@@ -140,6 +140,28 @@ const std::vector<migration>& schema_migrations() {
        "indexes",
        indexes(false),
        indexes(true)},
+      {4,
+       "device metadata",
+       {"ALTER TABLE devices ADD COLUMN platform TEXT",
+        "ALTER TABLE devices ADD COLUMN avatar TEXT"},
+       {"ALTER TABLE devices ADD COLUMN platform TEXT",
+        "ALTER TABLE devices ADD COLUMN avatar TEXT"}},
+      {5,
+       "device domains",
+       {"CREATE TABLE IF NOT EXISTS domains ("
+        "code TEXT PRIMARY KEY,"
+        "owner_id TEXT NOT NULL,"
+        "created_ms INTEGER NOT NULL,"
+        "revoked_ms INTEGER NOT NULL DEFAULT 0)",
+        "ALTER TABLE devices ADD COLUMN domain_code TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_devices_domain ON devices(domain_code)"},
+       {"CREATE TABLE IF NOT EXISTS domains ("
+        "code TEXT PRIMARY KEY,"
+        "owner_id TEXT NOT NULL,"
+        "created_ms INTEGER NOT NULL,"
+        "revoked_ms INTEGER NOT NULL DEFAULT 0)",
+        "ALTER TABLE devices ADD COLUMN domain_code TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_devices_domain ON devices(domain_code)"}},
   };
   return kMigrations;
 }

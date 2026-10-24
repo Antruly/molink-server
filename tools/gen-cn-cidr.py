@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generate server/src/security/cn_cidr_generated.inc from APNIC stats.
+"""Generate src/security/cn_cidr_generated.inc from APNIC stats.
 
 The server binary embeds this table so a self-hosted deployment does not need
 MaxMind or any other runtime geo database. Refresh it periodically:
 
-    python3 -I server/tools/gen-cn-cidr.py
-    python3 -I server/tools/gen-cn-cidr.py --check   # CI/manual drift check
+    python3 -I tools/gen-cn-cidr.py
+    python3 -I tools/gen-cn-cidr.py --check   # CI/manual drift check
 
 The source is the public APNIC delegated-statistics file. Only IPv4 mainland
 China allocations are included; IPv6 addresses are classified as overseas by
@@ -74,7 +74,7 @@ def render(data: bytes) -> str:
         f"// Source: {SOURCE_URL}",
         f"// Snapshot: {today}",
         f"// Source SHA-256: {digest}",
-        "// Regenerate with: python3 -I server/tools/gen-cn-cidr.py",
+        "// Regenerate with: python3 -I tools/gen-cn-cidr.py",
         "",
         "static constexpr cn_range kCnRanges[] = {",
     ]

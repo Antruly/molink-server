@@ -1,0 +1,32 @@
+# Node / admin SPA
+node_modules/
+ui/dist/
+.pnpm-store/
+
+# C++ build output
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+
+# Local server data and configuration
+molink-server-data/
+server-data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local secrets
+.env
+.env.local
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp

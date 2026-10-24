@@ -54,7 +54,9 @@ std::string random_id(const char* prefix, std::size_t bytes) {
   return hex.empty() ? std::string() : std::string(prefix) + hex;
 }
 
-std::string device_id() {
+/// Device IDs and domain codes share the same unambiguous alphabet, so a code
+/// can be read aloud or typed from a phone without I/1/O/0 confusion.
+std::string random_code_9() {
   static const char kAlphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   static constexpr std::size_t kSize = sizeof(kAlphabet) - 1;
   const std::string bytes = random_bytes(9);
@@ -64,6 +66,8 @@ std::string device_id() {
   for (unsigned char byte : bytes) out.push_back(kAlphabet[byte % kSize]);
   return out;
 }
+
+std::string device_id() { return random_code_9(); }
 
 std::string search_key(const std::string& name, const std::string& id,
                        const std::string& peer_ip) {
@@ -78,6 +82,9 @@ void fill_device(const uvcpp::uvcpp_db_row& row, device_record& out) {
   out.peer_ip = row["peer_ip"].to_text();
   out.port = static_cast<int>(row["port"].to_int64());
   out.version = row["version"].to_text();
+  out.platform = row["platform"].to_text();
+  out.avatar = row["avatar"].to_text();
+  out.domain_code = row["domain_code"].to_text();
   out.created_ms = static_cast<std::uint64_t>(row["created_ms"].to_int64());
   out.last_seen_ms = static_cast<std::uint64_t>(row["last_seen_ms"].to_int64());
 }
@@ -125,7 +132,7 @@ void fill_ban(const uvcpp::uvcpp_db_row& row, ban_record& out) {
 
 const char* kDeviceColumns =
     "id, token_hash, name, address, peer_ip, port, version, created_ms, "
-    "last_seen_ms";
+    "last_seen_ms, platform, avatar, domain_code";
 const char* kUserColumns =
     "id, username, username_norm, display_name, role, password_algo, "
     "password_iterations, password_salt, password_hash, created_ms, "
@@ -149,12 +156,14 @@ bool device_repository::insert(uvcpp::uvcpp_db_client& client,
     }
     const std::string sql =
         "INSERT INTO devices (id, token_hash, name, address, peer_ip, port, "
-        "version, search_key, created_ms, last_seen_ms) VALUES (" +
+        "version, search_key, created_ms, last_seen_ms, platform, avatar) "
+        "VALUES (" +
         dialect.placeholder(1) + ", " + dialect.placeholder(2) + ", " +
         dialect.placeholder(3) + ", " + dialect.placeholder(4) + ", " +
         dialect.placeholder(5) + ", " + dialect.placeholder(6) + ", " +
         dialect.placeholder(7) + ", " + dialect.placeholder(8) + ", " +
-        dialect.placeholder(9) + ", " + dialect.placeholder(10) + ")";
+        dialect.placeholder(9) + ", " + dialect.placeholder(10) + ", " +
+        dialect.placeholder(11) + ", " + dialect.placeholder(12) + ")";
     const uvcpp::uvcpp_db_params params{
         record.id,
         record.token_hash,
@@ -165,7 +174,9 @@ bool device_repository::insert(uvcpp::uvcpp_db_client& client,
         record.version,
         search_key(record.name, record.id, record.peer_ip),
         static_cast<int64_t>(record.created_ms),
-        static_cast<int64_t>(record.last_seen_ms)};
+        static_cast<int64_t>(record.last_seen_ms),
+        record.platform,
+        record.avatar};
     int64_t affected = 0;
     const auto status = client.execute(sql, params, &affected);
     if (ok(status)) return true;
@@ -189,7 +200,10 @@ bool device_repository::heartbeat(uvcpp::uvcpp_db_client& client,
                                   const std::string& token_hash,
                                   const std::string& address,
                                   const std::string& peer_ip, int port,
-                                  const std::string& version, bool& found,
+                                  const std::string& version,
+                                  const std::string& name,
+                                  const std::string& platform,
+                                  const std::string& avatar, bool& found,
                                   std::string& err) const {
   // NULLIF/COALESCE use each placeholder exactly once: SQLite binds one
   // parameter per `?`, while repeating `$2` would be fine on PostgreSQL only.
@@ -198,11 +212,14 @@ bool device_repository::heartbeat(uvcpp::uvcpp_db_client& client,
       ", address = COALESCE(NULLIF(" + dialect.placeholder(2) +
       ", ''), address), peer_ip = " + dialect.placeholder(3) +
       ", port = " + dialect.placeholder(4) + ", version = COALESCE(NULLIF(" +
-      dialect.placeholder(5) + ", ''), version) WHERE id = " +
-      dialect.placeholder(6) + " AND token_hash = " + dialect.placeholder(7);
+      dialect.placeholder(5) + ", ''), version), name = COALESCE(NULLIF(" +
+      dialect.placeholder(6) + ", ''), name), platform = COALESCE(NULLIF(" +
+      dialect.placeholder(7) + ", ''), platform), avatar = COALESCE(NULLIF(" +
+      dialect.placeholder(8) + ", ''), avatar) WHERE id = " +
+      dialect.placeholder(9) + " AND token_hash = " + dialect.placeholder(10);
   const uvcpp::uvcpp_db_params params{
-      static_cast<int64_t>(epoch_ms()), address, peer_ip, port, version, id,
-      token_hash};
+      static_cast<int64_t>(epoch_ms()), address, peer_ip, port, version, name,
+      platform, avatar, id, token_hash};
   int64_t affected = 0;
   if (!exec(client, sql, params, err, &affected)) return false;
   found = affected > 0;
@@ -348,6 +365,213 @@ bool device_repository::count_for_ip(uvcpp::uvcpp_db_client& client,
     return false;
   }
   out = static_cast<std::size_t>(table.value("n").to_int64());
+  return true;
+}
+
+// ---------------------------------------------------------------- domains ---
+
+bool device_repository::create_domain(uvcpp::uvcpp_db_client& client,
+                                      const sql_dialect& dialect,
+                                      const std::string& owner_id,
+                                      std::string& code,
+                                      std::string& err) const {
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    std::string candidate = random_code_9();
+    if (candidate.empty()) {
+      err = "secure random generator is unavailable";
+      return false;
+    }
+    const std::string sql =
+        "INSERT INTO domains (code, owner_id, created_ms, revoked_ms) VALUES (" +
+        dialect.placeholder(1) + ", " + dialect.placeholder(2) + ", " +
+        dialect.placeholder(3) + ", " + dialect.placeholder(4) + ")";
+    const uvcpp::uvcpp_db_params params{candidate, owner_id,
+                                        static_cast<int64_t>(epoch_ms()),
+                                        static_cast<int64_t>(0)};
+    const auto status = client.execute(sql, params);
+    if (ok(status)) {
+      code = std::move(candidate);
+      return true;
+    }
+    const std::string message = client.last_error();
+    const bool collision =
+        message.find("UNIQUE") != std::string::npos ||
+        message.find("unique") != std::string::npos ||
+        message.find("duplicate") != std::string::npos;
+    if (!collision) {
+      err = error_of(client, status);
+      return false;
+    }
+  }
+  err = "could not allocate a domain code";
+  return false;
+}
+
+bool device_repository::domain_for_device(uvcpp::uvcpp_db_client& client,
+                                          const sql_dialect& dialect,
+                                          const std::string& id,
+                                          std::string& code, bool& valid,
+                                          std::string& err) const {
+  uvcpp::uvcpp_db_table table;
+  const std::string sql =
+      "SELECT d.domain_code AS code, CASE WHEN dm.code IS NULL OR "
+      "dm.revoked_ms <> 0 THEN 0 ELSE 1 END AS valid FROM devices d "
+      "LEFT JOIN domains dm ON dm.code = d.domain_code WHERE d.id = " +
+      dialect.placeholder(1);
+  if (!query(client, sql, uvcpp::uvcpp_db_params{id}, table, err)) return false;
+  code.clear();
+  valid = false;
+  if (table.empty()) {
+    err = "device not found";
+    return false;
+  }
+  const uvcpp::uvcpp_db_row& row = table.rows().front();
+  code = row["code"].to_text();
+  valid = !code.empty() && row["valid"].to_int64() != 0;
+  return true;
+}
+
+bool device_repository::join_domain(uvcpp::uvcpp_db_client& client,
+                                    const sql_dialect& dialect,
+                                    const std::string& id,
+                                    const std::string& token_hash,
+                                    const std::string& code, bool& found,
+                                    bool& code_valid,
+                                    std::string& err) const {
+  found = false;
+  code_valid = false;
+  uvcpp::uvcpp_db_table device_table;
+  if (!query(client,
+             "SELECT id FROM devices WHERE id = " + dialect.placeholder(1) +
+                 " AND token_hash = " + dialect.placeholder(2),
+             uvcpp::uvcpp_db_params{id, token_hash}, device_table, err)) {
+    return false;
+  }
+  found = !device_table.empty();
+  if (!found) return true;
+  uvcpp::uvcpp_db_table domain_table;
+  if (!query(client,
+             "SELECT code FROM domains WHERE code = " +
+                 dialect.placeholder(1) + " AND revoked_ms = 0",
+             uvcpp::uvcpp_db_params{code}, domain_table, err)) {
+    return false;
+  }
+  code_valid = !domain_table.empty();
+  if (!code_valid) return true;
+  return exec(client,
+              "UPDATE devices SET domain_code = " + dialect.placeholder(1) +
+                  " WHERE id = " + dialect.placeholder(2) +
+                  " AND token_hash = " + dialect.placeholder(3),
+              uvcpp::uvcpp_db_params{code, id, token_hash}, err);
+}
+
+bool device_repository::rotate_domain(uvcpp::uvcpp_db_client& client,
+                                      const sql_dialect& dialect,
+                                      const std::string& id,
+                                      const std::string& token_hash,
+                                      std::string& code, bool& found,
+                                      std::string& err) const {
+  found = false;
+  code.clear();
+  uvcpp::uvcpp_db_table table;
+  const std::string sql =
+      "SELECT d.domain_code AS code, dm.owner_id AS owner FROM devices d "
+      "LEFT JOIN domains dm ON dm.code = d.domain_code WHERE d.id = " +
+      dialect.placeholder(1) + " AND d.token_hash = " + dialect.placeholder(2);
+  if (!query(client, sql, uvcpp::uvcpp_db_params{id, token_hash}, table, err)) {
+    return false;
+  }
+  found = !table.empty();
+  if (!found) return true;
+  const uvcpp::uvcpp_db_row& row = table.rows().front();
+  const std::string current = row["code"].to_text();
+  const std::string owner = row["owner"].to_text();
+  // Only the code's owner can end the whole group. A device that joined
+  // someone else's code simply leaves it and gets a group of its own.
+  if (!current.empty() && owner == id) {
+    if (!exec(client,
+              "UPDATE domains SET revoked_ms = " + dialect.placeholder(1) +
+                  " WHERE code = " + dialect.placeholder(2) +
+                  " AND revoked_ms = 0",
+              uvcpp::uvcpp_db_params{static_cast<int64_t>(epoch_ms()),
+                                     current},
+              err)) {
+      return false;
+    }
+  }
+  std::string fresh;
+  if (!create_domain(client, dialect, id, fresh, err)) return false;
+  if (!exec(client,
+            "UPDATE devices SET domain_code = " + dialect.placeholder(1) +
+                " WHERE id = " + dialect.placeholder(2) +
+                " AND token_hash = " + dialect.placeholder(3),
+            uvcpp::uvcpp_db_params{fresh, id, token_hash}, err)) {
+    return false;
+  }
+  code = std::move(fresh);
+  return true;
+}
+
+bool device_repository::clear_domain(uvcpp::uvcpp_db_client& client,
+                                     const sql_dialect& dialect,
+                                     const std::string& id,
+                                     const std::string& token_hash,
+                                     bool& found, std::string& err) const {
+  int64_t affected = 0;
+  if (!exec(client,
+            "UPDATE devices SET domain_code = '' WHERE id = " +
+                dialect.placeholder(1) + " AND token_hash = " +
+                dialect.placeholder(2),
+            uvcpp::uvcpp_db_params{id, token_hash}, err, &affected)) {
+    return false;
+  }
+  found = affected > 0;
+  return true;
+}
+
+bool device_repository::list_domain_devices(
+    uvcpp::uvcpp_db_client& client, const sql_dialect& dialect,
+    const std::string& code, const std::string& exclude_id, std::size_t limit,
+    std::vector<device_record>& out, std::string& err) const {
+  uvcpp::uvcpp_db_table table;
+  const std::string sql = std::string("SELECT ") + kDeviceColumns +
+                          " FROM devices WHERE domain_code = " +
+                          dialect.placeholder(1) + " AND id <> " +
+                          dialect.placeholder(2) +
+                          " ORDER BY last_seen_ms DESC LIMIT " +
+                          dialect.placeholder(3);
+  if (!query(client, sql,
+             uvcpp::uvcpp_db_params{code, exclude_id,
+                                    static_cast<int64_t>(limit)},
+             table, err)) {
+    return false;
+  }
+  out.clear();
+  out.reserve(table.row_count());
+  for (const uvcpp::uvcpp_db_row& row : table.rows()) {
+    device_record record;
+    fill_device(row, record);
+    out.push_back(std::move(record));
+  }
+  return true;
+}
+
+bool device_repository::find_authorized(uvcpp::uvcpp_db_client& client,
+                                        const sql_dialect& dialect,
+                                        const std::string& id,
+                                        const std::string& token_hash,
+                                        device_record& out, bool& found,
+                                        std::string& err) const {
+  uvcpp::uvcpp_db_table table;
+  const std::string sql = std::string("SELECT ") + kDeviceColumns +
+                          " FROM devices WHERE id = " + dialect.placeholder(1) +
+                          " AND token_hash = " + dialect.placeholder(2);
+  if (!query(client, sql, uvcpp::uvcpp_db_params{id, token_hash}, table,
+             err)) {
+    return false;
+  }
+  found = !table.empty();
+  if (found) fill_device(table.rows().front(), out);
   return true;
 }
 

@@ -59,6 +59,9 @@ json device_json(const device_record& record, int offline_after_seconds,
   out["peer_ip"] = record.peer_ip;
   out["port"] = record.port;
   out["version"] = record.version;
+  out["platform"] = record.platform;
+  out["avatar"] = record.avatar;
+  out["domain"] = record.domain_code;
   out["online"] =
       record.last_seen_ms != 0 &&
       now <= record.last_seen_ms +

@@ -67,9 +67,9 @@ std::string resolve_admin_ui_root(const server_config& config) {
     const std::filesystem::path dir = exe.parent_path();
     candidates.push_back(dir / "web-admin");
     candidates.push_back(dir / "../share/molink-server/web-admin");
-    candidates.push_back(dir / "../../server/ui/dist");
+    candidates.push_back(dir / "../ui/dist");
   }
-  candidates.emplace_back("server/ui/dist");
+  candidates.emplace_back("ui/dist");
   candidates.emplace_back("/opt/molink-server/share/web-admin");
   candidates.emplace_back("/usr/local/molink-server/share/web-admin");
   candidates.emplace_back("/usr/share/molink-server/web-admin");
@@ -87,7 +87,7 @@ void register_admin_ui(uvcpp::uvcpp_web_app& app, const std::string& root) {
       nlohmann::json body;
       body["service"] = "moLink Server admin";
       body["message"] =
-          "the admin UI is not staged; build server/ui and pass --ui-dir";
+          "the admin UI is not staged; build ui and pass --ui-dir";
       send_json(response, 200, body);
     });
     log_warn("admin UI is not staged; only /api/admin is available");

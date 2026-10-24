@@ -130,7 +130,13 @@ export function DevicesPage({ role, notify }: { role: Role; notify: Notify }) {
                         <span className="grid h-7 w-7 place-items-center rounded-lg bg-panel text-accent">
                           <MonitorSmartphone size={14} />
                         </span>
-                        <span className="font-medium text-ink">{device.name}</span>
+                        <div>
+                          <span className="font-medium text-ink">{device.name}</span>
+                          <div className="font-mono text-[10px] uppercase text-muted">
+                            {device.platform || 'device'}
+                            {device.domain ? ` · ${device.domain}` : ''}
+                          </div>
+                        </div>
                       </div>
                     </td>
                     <td className="font-mono text-[11px] text-muted">{device.display_id}</td>
