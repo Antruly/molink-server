@@ -261,7 +261,7 @@ Linux / Windows / macOS 上并行构建并上传安装包。CI 需要的仓库�
 
 | 变量 | 说明 |
 |---|---|
-| `UVCPP_VERSION` | libuvcpp 预编译包版本（Linux/Windows，默认 `1.8.4`） |
+| `UVCPP_VERSION` | libuvcpp 预编译包版本（Linux/Windows，默认 `1.8.5`） |
 | `UVCPP_REPO` | libuvcpp 仓库地址（macOS 源码构建使用） |
 | `UVCPP_REF` | 分支或标签（macOS 默认 `master`） |
 
