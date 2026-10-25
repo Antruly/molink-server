@@ -5,7 +5,7 @@
 ;            /DOutputDir=C:\path\to\build\package installer.iss
 
 #ifndef AppVersion
-  #define AppVersion "0.2.1"
+  #define AppVersion "0.2.2"
 #endif
 #ifndef PkgDir
   #error PkgDir must point at the staged package directory

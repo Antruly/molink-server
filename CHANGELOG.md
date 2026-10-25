@@ -3,7 +3,7 @@
 moLink Server 使用本仓库的 `v*` 标签发布，与桌面客户端
 （[Antruly/molink](https://github.com/Antruly/molink)）的版本线相互独立。
 
-## [Unreleased]
+## [0.2.2] — 2026-10-25
 
 ### Added
 
