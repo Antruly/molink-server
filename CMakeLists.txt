@@ -6,6 +6,42 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # libuvcpp with WEBAPP (same dependency as molink-core).
+set(MOLINK_UVCPP_PREFIX "" CACHE PATH
+  "Unpacked libuvcpp release archive (include/ and lib/, bin/ on Windows)")
+if(MOLINK_UVCPP_PREFIX)
+  if(NOT EXISTS "${MOLINK_UVCPP_PREFIX}/include/uvcpp/uvcpp_config.h")
+    message(FATAL_ERROR
+      "MOLINK_UVCPP_PREFIX does not look like a libuvcpp release archive: "
+      "${MOLINK_UVCPP_PREFIX}")
+  endif()
+  add_library(uvcpp_prebuilt SHARED IMPORTED)
+  set_target_properties(uvcpp_prebuilt PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${MOLINK_UVCPP_PREFIX}/include")
+  if(WIN32)
+    find_library(_uvp_implib NAMES uvcpp libuvcpp
+      PATHS "${MOLINK_UVCPP_PREFIX}/lib" NO_DEFAULT_PATH)
+    find_file(_uvp_dll NAMES uvcpp.dll libuvcpp.dll
+      PATHS "${MOLINK_UVCPP_PREFIX}/bin" NO_DEFAULT_PATH)
+    if(NOT _uvp_implib OR NOT _uvp_dll)
+      message(FATAL_ERROR
+        "libuvcpp release archive is missing uvcpp.lib or uvcpp.dll")
+    endif()
+    set_target_properties(uvcpp_prebuilt PROPERTIES
+      IMPORTED_IMPLIB "${_uvp_implib}"
+      IMPORTED_LOCATION "${_uvp_dll}")
+  else()
+    find_file(_uvp_so NAMES libuvcpp.so libuvcpp.dylib
+      PATHS "${MOLINK_UVCPP_PREFIX}/lib" NO_DEFAULT_PATH)
+    if(NOT _uvp_so)
+      message(FATAL_ERROR
+        "libuvcpp release archive is missing lib/libuvcpp.so")
+    endif()
+    set_target_properties(uvcpp_prebuilt PROPERTIES
+      IMPORTED_LOCATION "${_uvp_so}")
+  endif()
+  set(UVP_UVCPP_TARGET uvcpp_prebuilt)
+  set(_uvp_prefix "${MOLINK_UVCPP_PREFIX}")
+else()
 find_package(uvcpp 1.7.0 CONFIG QUIET)
 if(uvcpp_FOUND)
   set(UVP_UVCPP_TARGET uvcpp::uvcpp)
@@ -29,6 +65,7 @@ else()
   pkg_check_modules(UVCPP REQUIRED IMPORTED_TARGET "uvcpp>=1.7.0")
   set(UVP_UVCPP_TARGET PkgConfig::UVCPP)
 endif()
+endif()
 
 # The admin console, accounts and security policy all live in the database;
 # a libuvcpp without the DB module cannot build this server.
@@ -48,6 +85,7 @@ add_library(molink_server_core STATIC
   src/util.cpp
   src/logging.cpp
   src/config.cpp
+  src/tls.cpp
   src/db/database.cpp
   src/db/migrations.cpp
   src/db/repositories.cpp
@@ -57,6 +95,7 @@ add_library(molink_server_core STATIC
   src/settings_cache.cpp
   src/http_common.cpp
   src/device_api.cpp
+  src/signaling.cpp
   src/admin_api.cpp
   src/admin_ui.cpp
   src/runtime.cpp
@@ -82,7 +121,7 @@ endif()
 if(WIN32)
   # windows.h must not define min/max or pull in winsock.h before winsock2.h.
   target_compile_definitions(molink_server_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
-  target_link_libraries(molink_server_core PUBLIC ws2_32)
+  target_link_libraries(molink_server_core PUBLIC ws2_32 iphlpapi)
 endif()
 
 add_executable(molink-server
@@ -109,6 +148,10 @@ if(BUILD_TESTING)
   add_executable(molink-server-auth-test tests/auth_test.cpp)
   target_link_libraries(molink-server-auth-test PRIVATE molink_server_core)
   add_test(NAME server-auth COMMAND molink-server-auth-test)
+
+  add_executable(molink-server-signaling-test tests/signaling_test.cpp)
+  target_link_libraries(molink-server-signaling-test PRIVATE molink_server_core)
+  add_test(NAME server-signaling COMMAND molink-server-signaling-test)
 endif()
 
 # libuvcpp's shared library needs libllhttp from its own directory and carries
@@ -121,7 +164,7 @@ if(UNIX AND NOT APPLE)
   endif()
   foreach(_exe molink-server molink-server-foundation-test
           molink-server-unit-test molink-server-repository-test
-          molink-server-auth-test)
+          molink-server-auth-test molink-server-signaling-test)
     if(TARGET ${_exe})
       target_link_options(${_exe} PRIVATE "LINKER:--disable-new-dtags"
                                            "LINKER:-rpath,${_uvp_rpath}")

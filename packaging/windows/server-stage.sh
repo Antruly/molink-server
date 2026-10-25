@@ -26,6 +26,7 @@ cp "$CORE" "$PKG/molink-server.exe"
 cp -a "$UI/dist/." "$PKG/web-admin/"
 cp "$ROOT/packaging/windows/server-config.json" "$PKG/config.json"
 cp "$ROOT/packaging/windows/server-config-lan.json" "$PKG/config-lan.json"
+cp "$ROOT/packaging/windows/config.example.json" "$PKG/config.example.json"
 cp "$ROOT/packaging/windows/install-service.cmd" "$PKG/"
 cp "$ROOT/packaging/windows/uninstall-service.cmd" "$PKG/"
 cp "$ROOT/LICENSE" "$PKG/LICENSE.txt"
@@ -33,7 +34,9 @@ cp "$ROOT/packaging/windows/server-README.txt" "$PKG/README.txt"
 cp "$ROOT/packaging/icons/molink-server.ico" "$PKG/molink.ico"
 
 if [ -n "${UVCPP_LIB_DIR:-}" ] && [ -d "$UVCPP_LIB_DIR" ]; then
-  cp "$UVCPP_LIB_DIR"/*.dll "$PKG/" 2>/dev/null || true
+  # The release archive also carries the debug DLL; never ship it.
+  find "$UVCPP_LIB_DIR" -maxdepth 1 -name '*.dll' ! -name '*d.dll' \
+    -exec cp {} "$PKG/" \; 2>/dev/null || true
 fi
 # OpenSSL runtime (uvcpp's bin usually already has it).
 OPENSSL_DIR=${OPENSSL_BIN:-}

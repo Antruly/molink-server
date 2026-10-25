@@ -11,6 +11,12 @@
     "tls_cert": "",
     "tls_key": ""
   },
+  "tls": {
+    "enabled": true,
+    "cert": "C:\\ProgramData\\moLink\\Server\\cer\\server.crt",
+    "key": "C:\\ProgramData\\moLink\\Server\\cer\\server.key",
+    "auto_self_signed": true
+  },
   "admin": {
     "host": "0.0.0.0",
     "port": 28431,

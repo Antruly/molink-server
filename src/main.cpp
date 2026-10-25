@@ -43,6 +43,8 @@ void print_usage() {
       "  --host <addr>              device API bind address (default 0.0.0.0)\n"
       "  --port <n>                 device API port (default 28430)\n"
       "  --tls-cert/--tls-key <pem> device API TLS certificate and key\n"
+      "  --no-tls                   serve plain HTTP (TLS is on by default;\n"
+      "                             a self-signed pair is generated on first start)\n"
       "  --admin-host <addr>        admin API bind address (default 127.0.0.1)\n"
       "  --admin-port <n>           admin API port (default 28431)\n"
       "  --admin-tls-cert/--admin-tls-key <pem>\n"

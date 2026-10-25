@@ -49,6 +49,8 @@ fi
 
 install -m 0644 "$ROOT/packaging/macos/molink-server-config.json" \
   "$STAGE/usr/local/etc/molink-server/config.json.example"
+install -m 0644 "$ROOT/packaging/macos/molink-server-config.example.json" \
+  "$STAGE/usr/local/molink-server/config.example.json"
 install -m 0644 "$ROOT/packaging/macos/com.molink.server.plist" \
   "$STAGE/Library/LaunchDaemons/com.molink.server.plist"
 install -m 0644 "$ROOT/LICENSE" "$STAGE/usr/local/molink-server/LICENSE"

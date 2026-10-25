@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -13,6 +14,7 @@
 #include "http_common.h"
 #include "logging.h"
 #include "runtime.h"
+#include "tls.h"
 #include "util.h"
 #include "version.h"
 
@@ -352,6 +354,103 @@ std::size_t page_number(const uvcpp::uvcpp_web_request& request,
   } catch (...) {
     return fallback;
   }
+}
+
+std::string tls_path(const server_config& config, const std::string& value) {
+  if (value.empty()) return {};
+  const std::filesystem::path path(value);
+  if (path.is_absolute()) return path.lexically_normal().string();
+  return (std::filesystem::path(tls_base_dir(config)) / path)
+      .lexically_normal()
+      .string();
+}
+
+json tls_status_json(server_runtime& runtime) {
+  const server_config& config = runtime.config();
+  // `enabled` is what the config file says (applies on the next start);
+  // `running_enabled` is what this process is actually serving.
+  tls_update configured;
+  configured.enabled = config.tls.enabled;
+  configured.cert = config.tls.cert;
+  configured.key = config.tls.key;
+  configured.auto_self_signed = config.tls.auto_self_signed;
+  bool has_overlay = false;
+  std::string read_error;
+  if (!read_tls_overlay(config, configured, has_overlay, read_error)) {
+    read_error.clear();
+    has_overlay = false;
+  }
+  // Without an overlay the running values (config file + environment + CLI)
+  // are the effective ones.
+  if (!has_overlay) {
+    configured.enabled = config.tls.enabled;
+    configured.cert = config.tls.cert;
+    configured.key = config.tls.key;
+    configured.auto_self_signed = config.tls.auto_self_signed;
+  }
+
+  json out;
+  out["enabled"] = configured.enabled;
+  out["running_enabled"] = config.tls.enabled;
+  out["auto_self_signed"] = configured.auto_self_signed;
+  out["restart_required"] = runtime.tls_restart_required();
+  out["config_path"] = tls_settings_path(config);
+  out["config_file"] = config.config_path;
+  out["base_dir"] = tls_base_dir(config);
+  out["cert"] = tls_path(config, configured.cert);
+  out["key"] = tls_path(config, configured.key);
+  out["device_api"]["tls"] = runtime.device_tls();
+  out["device_api"]["cert"] = config.device.tls_cert;
+  out["device_api"]["key"] = config.device.tls_key;
+  out["admin_api"]["tls"] = runtime.admin_tls();
+  out["admin_api"]["cert"] = config.admin.tls_cert;
+  out["admin_api"]["key"] = config.admin.tls_key;
+
+  certificate_info info;
+  std::string error;
+  json certificate;
+  if (certificate_info_for(out["cert"].get<std::string>(), info, error)) {
+    certificate["found"] = info.found;
+    certificate["self_signed"] = info.self_signed;
+    certificate["subject"] = info.subject;
+    certificate["issuer"] = info.issuer;
+    certificate["not_before_ms"] = info.not_before_ms;
+    certificate["not_after_ms"] = info.not_after_ms;
+    certificate["dns_names"] = info.dns_names;
+    certificate["ip_addresses"] = info.ip_addresses;
+    certificate["fingerprint_sha256"] = info.fingerprint_sha256;
+  } else {
+    certificate["found"] = false;
+    certificate["error"] = error;
+  }
+  out["certificate"] = std::move(certificate);
+  return out;
+}
+
+tls_update current_tls_update(server_runtime& runtime) {
+  const server_config& config = runtime.config();
+  tls_update update;
+  update.enabled = config.tls.enabled;
+  update.cert = config.tls.cert;
+  update.key = config.tls.key;
+  update.auto_self_signed = config.tls.auto_self_signed;
+  return update;
+}
+
+void record_tls_audit(server_runtime& runtime, uvcpp::uvcpp_db_client& client,
+                      const admin_user& user,
+                      const std::string& details) {
+  audit_record event;
+  event.ts_ms = epoch_ms();
+  event.event = "settings.tls";
+  event.result = "ok";
+  event.actor_id = user.id;
+  event.actor_name = user.username;
+  event.role = user.role;
+  event.details_json = details;
+  std::string error;
+  runtime.audit_repository_ref().append(client, runtime.db().dialect(), event,
+                                        error);
 }
 
 }  // namespace
@@ -1219,6 +1318,139 @@ void register_admin_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime,
                          reply.body = document;
                        });
           });
+
+  app.get("/api/admin/tls",
+          [&runtime](uvcpp::uvcpp_web_request& request,
+                     uvcpp::uvcpp_web_response& response,
+                     uvcpp::uvcpp_web_next next) {
+            with_admin(runtime, request, response, next, 1, false,
+                       [&runtime](uvcpp::uvcpp_db_client&, const admin_user&,
+                                  const session_record&, http_reply& reply) {
+                         reply.body = tls_status_json(runtime).dump();
+                       });
+          });
+
+  app.put("/api/admin/tls",
+          [&runtime](uvcpp::uvcpp_web_request& request,
+                     uvcpp::uvcpp_web_response& response,
+                     uvcpp::uvcpp_web_next next) {
+            json body;
+            std::string error;
+            if (!parse_json_body(request, body, error)) {
+              send_error(response, 400, "bad_request", error);
+              return;
+            }
+            if (!body.contains("enabled") || !body["enabled"].is_boolean()) {
+              send_error(response, 400, "bad_request",
+                         "enabled must be a boolean");
+              return;
+            }
+            const bool enabled = body["enabled"].get<bool>();
+            with_admin(runtime, request, response, next, 3, true,
+                       [&runtime, enabled](uvcpp::uvcpp_db_client& client,
+                                           const admin_user& user,
+                                           const session_record&,
+                                           http_reply& reply) {
+                         tls_update update = current_tls_update(runtime);
+                         update.enabled = enabled;
+                         std::string error;
+                         if (!save_tls_settings(runtime.config(), update,
+                                                error)) {
+                           reply_error(reply, 400, "tls_write_failed", error);
+                           return;
+                         }
+                         runtime.set_tls_restart_required(true);
+                         record_tls_audit(runtime, client, user,
+                                          enabled ? R"({"enabled":true})"
+                                                  : R"({"enabled":false})");
+                         reply.body = tls_status_json(runtime).dump();
+                       });
+          });
+
+  app.post("/api/admin/tls/certificate",
+           [&runtime](uvcpp::uvcpp_web_request& request,
+                      uvcpp::uvcpp_web_response& response,
+                      uvcpp::uvcpp_web_next next) {
+             json body;
+             std::string error;
+             if (!parse_json_body(request, body, error)) {
+               send_error(response, 400, "bad_request", error);
+               return;
+             }
+             const std::string cert = body_string(body, "cert");
+             const std::string key = body_string(body, "key");
+             if (cert.empty() || key.empty()) {
+               send_error(response, 400, "bad_request",
+                          "cert and key are required");
+               return;
+             }
+             if (cert.size() > 256u * 1024u || key.size() > 256u * 1024u) {
+               send_error(response, 413, "payload_too_large",
+                          "certificate or key is too large");
+               return;
+             }
+             with_admin(runtime, request, response, next, 3, true,
+                        [&runtime, cert, key](uvcpp::uvcpp_db_client& client,
+                                              const admin_user& user,
+                                              const session_record&,
+                                              http_reply& reply) {
+                          tls_update update = current_tls_update(runtime);
+                          const std::string cert_path =
+                              tls_path(runtime.config(), update.cert);
+                          const std::string key_path =
+                              tls_path(runtime.config(), update.key);
+                          std::string error;
+                          if (!write_certificate_pair(cert_path, key_path,
+                                                      cert, key, error)) {
+                            reply_error(reply, 400, "invalid_certificate",
+                                        error);
+                            return;
+                          }
+                          update.enabled = true;
+                          if (!save_tls_settings(runtime.config(), update,
+                                                 error)) {
+                            reply_error(reply, 400, "tls_write_failed", error);
+                            return;
+                          }
+                          runtime.set_tls_restart_required(true);
+                          record_tls_audit(runtime, client, user,
+                                           R"({"action":"upload"})");
+                          reply.body = tls_status_json(runtime).dump();
+                        });
+           });
+
+  app.post("/api/admin/tls/self-signed",
+           [&runtime](uvcpp::uvcpp_web_request& request,
+                      uvcpp::uvcpp_web_response& response,
+                      uvcpp::uvcpp_web_next next) {
+             with_admin(runtime, request, response, next, 3, true,
+                        [&runtime](uvcpp::uvcpp_db_client& client,
+                                   const admin_user& user,
+                                   const session_record&,
+                                   http_reply& reply) {
+                          tls_update update = current_tls_update(runtime);
+                          const std::string cert_path =
+                              tls_path(runtime.config(), update.cert);
+                          const std::string key_path =
+                              tls_path(runtime.config(), update.key);
+                          std::string error;
+                          if (!reset_self_signed(cert_path, key_path, error)) {
+                            reply_error(reply, 500, "tls_generate_failed",
+                                        error);
+                            return;
+                          }
+                          update.enabled = true;
+                          if (!save_tls_settings(runtime.config(), update,
+                                                 error)) {
+                            reply_error(reply, 400, "tls_write_failed", error);
+                            return;
+                          }
+                          runtime.set_tls_restart_required(true);
+                          record_tls_audit(runtime, client, user,
+                                           R"({"action":"self-signed"})");
+                          reply.body = tls_status_json(runtime).dump();
+                        });
+           });
 
   app.get("/api/admin/bans",
           [&runtime](uvcpp::uvcpp_web_request& request,

@@ -6,7 +6,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -21,19 +20,6 @@ using nlohmann::json;
 std::string env_string(const char* name) {
   const char* value = std::getenv(name);
   return value == nullptr ? std::string() : std::string(value);
-}
-
-/// First regular file from @p names inside @p dir, or empty.
-std::string first_existing(const std::filesystem::path& dir,
-                           std::initializer_list<const char*> names) {
-  std::error_code ec;
-  for (const char* name : names) {
-    const std::filesystem::path candidate = dir / name;
-    if (std::filesystem::is_regular_file(candidate, ec)) {
-      return candidate.string();
-    }
-  }
-  return std::string();
 }
 
 bool parse_int_arg(const char* text, int& out) {
@@ -105,6 +91,16 @@ bool apply_json(const std::string& path, server_config& cfg, std::string& err) {
     cfg.allow_insecure_admin =
         a.value("allow_insecure_remote", cfg.allow_insecure_admin);
   }
+  if (document.contains("tls") && document["tls"].is_object()) {
+    const json& t = document["tls"];
+    if (t.contains("enabled") && t["enabled"].is_boolean()) {
+      cfg.tls.enabled = t["enabled"].get<bool>();
+    }
+    cfg.tls.cert = t.value("cert", cfg.tls.cert);
+    cfg.tls.key = t.value("key", cfg.tls.key);
+    cfg.tls.auto_self_signed =
+        t.value("auto_self_signed", cfg.tls.auto_self_signed);
+  }
   if (document.contains("database") && document["database"].is_object()) {
     const json& d = document["database"];
     cfg.database.driver = d.value("driver", cfg.database.driver);
@@ -144,6 +140,11 @@ void apply_environment(server_config& cfg) {
   apply_int("MOLINK_SERVER_ADMIN_PORT", cfg.admin.port);
   apply("MOLINK_SERVER_REGISTRATION_TOKEN", cfg.registration_token);
   apply("MOLINK_SERVER_PUBLIC_URL", cfg.public_url);
+  const std::string tls = env_string("MOLINK_SERVER_TLS");
+  if (!tls.empty()) {
+    cfg.tls.enabled = tls == "1" || tls == "true" || tls == "on" ||
+                      tls == "yes";
+  }
   apply("MOLINK_SERVER_LOG_LEVEL", cfg.log.level);
   apply("MOLINK_SERVER_LOG_FILE", cfg.log.file);
   apply("MOLINK_SERVER_UI_DIR", cfg.admin.web_root);
@@ -198,6 +199,10 @@ bool parse_cli(int argc, char** argv, server_config& cfg, std::string& err) {
       if (!next("--tls-cert", cfg.device.tls_cert)) return false;
     } else if (arg == "--tls-key") {
       if (!next("--tls-key", cfg.device.tls_key)) return false;
+    } else if (arg == "--no-tls") {
+      cfg.tls.enabled = false;
+    } else if (arg == "--tls") {
+      cfg.tls.enabled = true;
     } else if (arg == "--admin-host") {
       if (!next("--admin-host", cfg.admin.host)) return false;
     } else if (arg == "--admin-port") {
@@ -366,30 +371,6 @@ bool parse_config(int argc, char** argv, server_config& out, std::string& err) {
   apply_environment(cfg);
   if (!parse_cli(argc, argv, cfg, err)) return false;
   if (cfg.config_path.empty()) cfg.config_path = env_string("MOLINK_SERVER_CONFIG");
-
-  // Opt-in convention: put fullchain.pem/privkey.pem (or cert.pem/key.pem)
-  // into a tls/ directory next to the config file or in the data directory and
-  // the service picks them up at startup without editing JSON.
-  if (cfg.device.tls_cert.empty() && cfg.device.tls_key.empty()) {
-    std::vector<std::filesystem::path> dirs;
-    if (!cfg.config_path.empty()) {
-      dirs.push_back(std::filesystem::path(cfg.config_path).parent_path() / "tls");
-    }
-    if (!cfg.data_dir.empty()) {
-      dirs.push_back(std::filesystem::path(cfg.data_dir) / "tls");
-    }
-    for (const std::filesystem::path& dir : dirs) {
-      const std::string cert =
-          first_existing(dir, {"fullchain.pem", "cert.pem"});
-      const std::string key =
-          first_existing(dir, {"privkey.pem", "key.pem"});
-      if (!cert.empty() && !key.empty()) {
-        cfg.device.tls_cert = cert;
-        cfg.device.tls_key = key;
-        break;
-      }
-    }
-  }
 
   if (!validate(cfg, err)) return false;
   if (cfg.database.url.empty()) {

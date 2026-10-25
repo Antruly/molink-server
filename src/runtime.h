@@ -14,6 +14,7 @@
 #include "security/ban_cache.h"
 #include "security/rate_limiter.h"
 #include "settings_cache.h"
+#include "signaling.h"
 
 namespace molink {
 
@@ -45,12 +46,17 @@ class server_runtime {
   settings_cache& settings() { return settings_; }
   ban_cache& bans() { return ban_cache_; }
   rate_limiter& limiter() { return limiter_; }
+  signaling_service& signaling() { return signaling_; }
   uvcpp::uvcpp_web_app& device_app() { return device_app_; }
   uvcpp::uvcpp_web_app& admin_app() { return admin_app_; }
   std::atomic<bool>& stopping() { return stopping_; }
 
   bool device_tls() const { return !config_.device.tls_cert.empty(); }
   bool admin_tls() const { return !config_.admin.tls_cert.empty(); }
+
+  /// Set when the TLS settings on disk differ from the running listeners.
+  bool tls_restart_required() const { return tls_restart_required_; }
+  void set_tls_restart_required(bool value) { tls_restart_required_ = value; }
   std::uint64_t started_ms() const { return started_ms_; }
   const std::string& ui_root() const { return ui_root_; }
 
@@ -74,9 +80,11 @@ class server_runtime {
   settings_cache settings_;
   ban_cache ban_cache_;
   rate_limiter limiter_;
+  signaling_service signaling_;
   uvcpp::uvcpp_web_app device_app_;
   uvcpp::uvcpp_web_app admin_app_;
   std::atomic<bool> stopping_{false};
+  std::atomic<bool> tls_restart_required_{false};
   bool started_ = false;
   bool shutdown_done_ = false;
   std::uint64_t started_ms_ = 0;

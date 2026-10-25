@@ -11,7 +11,7 @@ IP 来源策略、请求限速、临时封禁和审计日志。
 
 | 监听 | 默认地址 | 用途 |
 |---|---|---|
-| 设备 API | `0.0.0.0:28430` | `/v1/devices/register|heartbeat|domain|unregister`、`/v1/devices`、`/healthz` |
+| 设备 API | `0.0.0.0:28430` | `/v1/devices/register|heartbeat|domain|unregister`、`/v1/devices`、`/v1/connect*`（P2P 信令）、`/healthz` |
 | 管理 API/网页 | `127.0.0.1:28431` | `/api/admin/*` 与内置管理控制台 |
 
 管理面默认只绑定回环地址，安装时可选择绑定 `0.0.0.0`。公网部署时建议：
@@ -37,6 +37,14 @@ IP 来源策略、请求限速、临时封禁和审计日志。
 - `GET /v1/devices/domain?id=<ID>&token=<TOKEN>`：返回与调用者同域组的其他设备
   （最多 100 台，含在线状态与连接地址）。非成员或已撤销的码返回 404。
 - 域组码用于筛选与发现，不替代验证码：实际连接仍需要对方验证码或访问确认。
+
+### 1.1 局域网地址
+
+注册与心跳可以携带 `address`（客户端访问目录所用的本机 IPv4）。目录保存它，并在
+`GET /v1/devices` 中返回：只有请求方与目标**共享同一个公网 IP**（同一 NAT 出口，
+或请求来自回环）时，响应里的 `address` 才非空；外网查询只返回 `peer_ip`。客户端
+优先使用 `address`，这样同一内网里的设备通过公网目录也能直接互联，同时不会把
+内网地址暴露给外网。
 
 ## 2. 安装
 
@@ -116,7 +124,7 @@ sudo launchctl bootout system/com.molink.server
 
 ## 3. 首次使用
 
-浏览器打开 `http://127.0.0.1:28431`：
+浏览器打开 `https://127.0.0.1:28431`（默认自签名证书）：
 
 1. 设置管理员用户名、显示名称和密码（至少 10 个字符）。
 2. 创建后进入仪表盘，显示在线/注册设备、账户、封禁、运行时间与监听信息。
@@ -148,6 +156,11 @@ sudo launchctl bootout system/com.molink.server
     "public_url": "",
     "offline_after_seconds": 90
   },
+  "tls": {
+    "enabled": true,
+    "cert": "cer/server.crt", "key": "cer/server.key",
+    "auto_self_signed": true
+  },
   "device": {
     "host": "0.0.0.0", "port": 28430,
     "tls_cert": "", "tls_key": ""
@@ -172,7 +185,7 @@ sudo launchctl bootout system/com.molink.server
 常用命令行参数：
 
 ```
---config <file>  --host/--port  --tls-cert/--tls-key
+--config <file>  --host/--port  --no-tls  --tls-cert/--tls-key
 --admin-host/--admin-port  --admin-tls-cert/--admin-tls-key
 --ui-dir <dir>  --data-dir <dir>
 --db-driver sqlite|postgres  --db-url <url>  --db-pool-min/--db-pool-max
@@ -188,12 +201,13 @@ sudo launchctl bootout system/com.molink.server
 `MOLINK_SERVER_DB_DRIVER`、`MOLINK_SERVER_DB_URL`、`MOLINK_SERVER_DB_POOL_MIN`、
 `MOLINK_SERVER_DB_POOL_MAX`、`MOLINK_SERVER_DB_BUSY_TIMEOUT_MS`、
 `MOLINK_SERVER_LOG_LEVEL`、`MOLINK_SERVER_LOG_FILE`、`MOLINK_SERVER_UI_DIR`、
-`MOLINK_SERVER_SETUP_TOKEN`、`MOLINK_SERVER_ADMIN_ALLOW_INSECURE`、
+`MOLINK_SERVER_SETUP_TOKEN`、`MOLINK_SERVER_ADMIN_ALLOW_INSECURE`、`MOLINK_SERVER_TLS`（`1`/`0`）、
 `MOLINK_SERVER_TLS_CERT`、`MOLINK_SERVER_TLS_KEY`、
 `MOLINK_SERVER_ADMIN_TLS_CERT`、`MOLINK_SERVER_ADMIN_TLS_KEY`。
 
 管理页里的「安全策略」和「服务目录」会写回数据库并即时生效；监听地址、端口、
-TLS、数据库连接和 UI 目录属于启动配置，修改后需要重启服务。
+数据库连接和 UI 目录属于启动配置，修改后需要重启服务。TLS 可在管理页
+「设置 → HTTPS 证书」修改（写回配置文件），同样需要重启。
 
 ## 5. 数据库
 
@@ -252,57 +266,87 @@ IPv6：私有/回环地址按私有处理，公网 IPv6 归入“海外”；v1 
 3. 若代理终止 TLS，把 `secure_cookie` 设为 `auto` 或 `always`，并保留
    `trust_forwarded_proto` 开启，以便 Secure Cookie 与 Origin 校验正确。
 
-示例（nginx）：
+内置 TLS 默认开启，因此代理的上游是 `https://`。示例（nginx，自签名上游）：
 
 ```nginx
 location / {
-    proxy_pass http://127.0.0.1:28431;
+    proxy_pass https://127.0.0.1:28431;
+    proxy_ssl_verify off;   # 上游是自签名证书；换成正式证书后可开启校验
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
 
+如果希望代理终止 TLS、上游走明文 HTTP，先在配置文件中关闭内置 TLS
+（`"tls": { "enabled": false }`）并重启，再把 `proxy_pass` 改回
+`http://127.0.0.1:28431`。
+
 设备 API 也可以按同样方式放在代理后；客户端填写代理的 `https://` 地址即可。
 
 ## 7. TLS
 
-设备面与管理面可以分别启用 TLS。证书使用 PEM；私钥不能带密码短语。设备面证书
-必须覆盖客户端连接使用的域名（内置默认目录为 `molink.ssvr.top`），并建议在
-`tls_cert` 文件中放入 **完整链**（站点证书 + 中间证书）。客户端会严格校验证书与
-主机名，自签或私有 CA 需要在客户端额外提供 CA。
+**默认启用 HTTPS。** 设备面与管理面共用一套证书，使用 PEM；私钥不能带密码
+短语。证书必须覆盖客户端连接使用的域名（内置默认目录为 `molink.ssvr.top`），
+并建议放入 **完整链**（站点证书 + 中间证书）。客户端会严格校验证书与主机名，
+自签或私有 CA 需要在客户端额外提供 CA。
 
-### 7.0 目录约定（不改 JSON）
+### 7.0 默认证书与自动生成
 
-不想在配置里写绝对路径时，把文件放到下面任意一个 `tls/` 目录，服务启动时会
-自动发现并启用 TLS：
+配置里的相对路径以 **`config.json` 所在目录**为基准（没有配置文件时用当前工作
+目录）。默认值：
 
-```text
-<config.json 所在目录>/tls/fullchain.pem  + privkey.pem
-<data_dir>/tls/fullchain.pem              + privkey.pem
+```json
+"tls": {
+  "enabled": true,
+  "cert": "cer/server.crt",
+  "key": "cer/server.key",
+  "auto_self_signed": true
+}
 ```
 
-也接受 `cert.pem` + `key.pem` 这组文件名。显式配置（命令行 / 环境变量 /
-JSON）优先于目录发现；只找到其中一个文件时不会启用 TLS，服务照常以 HTTP 启动。
+首次启动时如果这对文件都不存在，服务会自动生成一份 RSA 2048 自签名证书：
 
-### 7.1 配置文件（推荐）
+- 专有名称（CN）使用本机主机名；
+- SAN 包含主机名、`localhost`、`127.0.0.1`、`::1` 和本机各网卡地址；
+- 有效期 10 年，`cer/` 目录与私钥仅服务账户可读写。
 
-编辑 `/etc/molink-server/config.json`：
+自签名证书只适合内网或首次部署。客户端连接时需要把 `cer/server.crt` 填进
+「设置 → 服务端 → 自定义 CA」。
+
+管理页「设置 → HTTPS 证书」可以查看证书主题、有效期、SAN 与 SHA-256 指纹，
+并执行：
+
+| 操作 | 效果 |
+|---|---|
+| 关闭证书 | 写入 `"enabled": false`，重启后两个监听改为 HTTP |
+| 上传证书 | 校验证书与私钥匹配后覆盖 `cer/server.crt` / `cer/server.key` |
+| 重新生成自签名 | 用当前主机名与地址重新生成一对自签名证书 |
+
+修改写入 `<data_dir>/tls.json`（不改动主配置文件），**重启 `molink-server` 后生效**（管理页会显示“重启后
+生效”）。启用或关闭 HTTPS 后，管理页地址会在 `http://` 与 `https://` 之间
+切换。
+
+旧约定仍然可用：`<config.json 所在目录>/tls/fullchain.pem` + `privkey.pem`
+（也接受 `cert.pem` + `key.pem`）在 `cer/` 不存在时会被自动发现；
+`<data_dir>/tls/` 同样适用。
+
+### 7.1 使用自己的证书
+
+把证书与私钥放到任意路径，然后在配置文件中修改：
 
 ```json
 {
-  "device": {
-    "host": "0.0.0.0",
-    "port": 28430,
-    "tls_cert": "/etc/molink-server/device.crt",
-    "tls_key": "/etc/molink-server/device.key"
-  },
-  "admin": {
-    "host": "127.0.0.1",
-    "port": 28431
+  "tls": {
+    "enabled": true,
+    "cert": "/etc/molink-server/device.crt",
+    "key": "/etc/molink-server/device.key",
+    "auto_self_signed": false
   }
 }
 ```
+
+也可以直接在管理页上传，文件会覆盖到配置的 `cert` / `key` 路径。
 
 ```sh
 sudo systemctl restart molink-server
@@ -319,12 +363,22 @@ sudo install -m 0640 -o root -g molink-server device.key /etc/molink-server/
 macOS 的服务账户是 `_molink`，Windows 服务以服务账户运行；确保对应账户能读取
 私钥即可。私钥不要放在仓库或 Web 目录中。
 
+系统包模板把证书放在数据目录下（Linux `/var/lib/molink-server/cer`、
+macOS `/usr/local/var/molink-server/cer`、Windows
+`C:\ProgramData\moLink\Server\cer`），确保服务账户可写。
+
 ### 7.2 命令行
 
 ```sh
+# 关闭 TLS（两个监听都走 HTTP）
+molink-server --no-tls
+
+# 单独覆盖设备面证书（管理面继续使用共享证书）
 molink-server --tls-cert /etc/molink-server/device.crt \
-              --tls-key  /etc/molink-server/device.key \
-              --admin-tls-cert /etc/molink-server/admin.crt \
+              --tls-key  /etc/molink-server/device.key
+
+# 管理面单独覆盖
+molink-server --admin-tls-cert /etc/molink-server/admin.crt \
               --admin-tls-key  /etc/molink-server/admin.key
 ```
 

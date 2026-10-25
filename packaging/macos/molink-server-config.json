@@ -11,6 +11,12 @@
     "tls_cert": "",
     "tls_key": ""
   },
+  "tls": {
+    "enabled": true,
+    "cert": "/usr/local/var/molink-server/cer/server.crt",
+    "key": "/usr/local/var/molink-server/cer/server.key",
+    "auto_self_signed": true
+  },
   "admin": {
     "host": "127.0.0.1",
     "port": 28431,

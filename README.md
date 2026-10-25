@@ -86,9 +86,13 @@ cd ui && pnpm install --frozen-lockfile && pnpm build
 
 ```sh
 ./build/molink-server --data-dir ./molink-server-data
-# 管理控制台：http://127.0.0.1:28431
-# 设备 API：  http://127.0.0.1:28430
+# 首次启动会在 ./cer/ 下自动生成自签名证书
+# 管理控制台：https://127.0.0.1:28431 （浏览器会提示自签名证书）
+# 设备 API：  https://127.0.0.1:28430
 ```
+
+默认启用 HTTPS。需要纯 HTTP 时加 `--no-tls`，或在管理页「设置 → HTTPS 证书」
+关闭后重启服务。
 
 首次打开管理页会要求创建管理员（至少 10 位密码）。如果管理面绑定在非回环
 地址，启动日志会打印一次性初始化令牌，也可用 `--setup-token` 固定。
@@ -101,6 +105,12 @@ cd ui && pnpm install --frozen-lockfile && pnpm build
 ```json
 {
   "server": { "data_dir": "/var/lib/molink-server" },
+  "tls": {
+    "enabled": true,
+    "cert": "cer/server.crt",
+    "key": "cer/server.key",
+    "auto_self_signed": true
+  },
   "device": { "host": "0.0.0.0", "port": 28430 },
   "admin":  { "host": "127.0.0.1", "port": 28431 }
 }
@@ -115,15 +125,29 @@ cd ui && pnpm install --frozen-lockfile && pnpm build
 写回数据库并即时生效；监听地址、端口、TLS 与数据库连接需要重启。
 
 未指定 `--config` / `MOLINK_SERVER_CONFIG` 时，服务会读取当前目录的
-`config.json`。启用 TLS 最简单的做法是把证书放进目录，不用改 JSON：
+`config.json`。安装目录（或 `config.json` 所在目录）会附带一份
+`config.example.json`，其中的证书与私钥默认指向同目录下的 `cer/`：
 
 ```text
-<config.json 所在目录>/tls/fullchain.pem + privkey.pem
-<data_dir>/tls/fullchain.pem             + privkey.pem
+<config.json 所在目录>/cer/server.crt
+<config.json 所在目录>/cer/server.key
 ```
 
-也接受 `cert.pem` + `key.pem`；也可用 `MOLINK_SERVER_TLS_CERT` /
-`MOLINK_SERVER_TLS_KEY` 环境变量。显式配置优先于目录自动发现。
+首次启动时如果这对文件不存在，服务会自动生成一份覆盖本机名、`localhost` 与
+本机 IP 的自签名证书（`auto_self_signed: true`），随后两个监听都使用 HTTPS。
+客户端连接自签名目录时，需要把 `cer/server.crt` 导入为自定义 CA。
+
+管理页「设置 → HTTPS 证书」可以：
+
+- 关闭证书（改用 HTTP）或重新启用；
+- 上传自己的证书与私钥（PEM，私钥不能带口令）；
+- 重新生成自签名证书。
+
+修改写入 `<data_dir>/tls.json`（不改动主配置文件），重启 `molink-server` 后生效。
+
+兼容旧约定：`<config.json 所在目录>/tls/fullchain.pem` + `privkey.pem`
+（也接受 `cert.pem` + `key.pem`）在 `cer/` 不存在时仍会被自动发现；也可用
+`MOLINK_SERVER_TLS_CERT` / `MOLINK_SERVER_TLS_KEY` 环境变量做单监听覆盖。
 
 ## 设备 API
 
@@ -135,7 +159,16 @@ cd ui && pnpm install --frozen-lockfile && pnpm build
 | `GET` | `/v1/devices?id=` / `?ids=` | 按 ID 查询地址 | 无 |
 | `GET` | `/v1/devices/domain` | 列出同域组设备 | id + token |
 | `POST` | `/v1/devices/unregister` | 注销设备 | id + token |
+| `POST` | `/v1/connect` | 发起 P2P 呼叫（ICE offer + 候选地址） | id + token |
+| `GET` | `/v1/connect/pending` | 被叫方轮询待处理的呼叫 | id + token |
+| `POST` | `/v1/connect/answer` | 被叫方接受呼叫（answer + 候选地址） | id + token |
+| `GET` | `/v1/connect/status` | 查询呼叫状态与对方候选地址 | id + token |
+| `POST` | `/v1/connect/candidates` | 追加 trickle 候选地址 | id + token |
+| `POST` | `/v1/connect/close` | 关闭呼叫 | id + token |
 | `GET` | `/healthz` | 数据库健康检查 | 无 |
+
+P2P 打洞、中继与 QUIC 数据面的设计见
+[docs/p2p-relay.md](docs/p2p-relay.md)。
 
 ```sh
 curl -s -X POST http://127.0.0.1:28430/v1/devices/register \
@@ -164,7 +197,7 @@ curl -s -X POST http://127.0.0.1:28430/v1/devices/register \
 
 ## 管理控制台
 
-`http://127.0.0.1:28431`，首次启动创建管理员。角色：
+`https://127.0.0.1:28431`（首次启动会生成自签名证书），创建管理员。角色：
 
 | 角色 | 权限 |
 |---|---|
@@ -228,8 +261,9 @@ Linux / Windows / macOS 上并行构建并上传安装包。CI 需要的仓库�
 
 | 变量 | 说明 |
 |---|---|
-| `UVCPP_REPO` | libuvcpp 仓库地址（必需） |
-| `UVCPP_REF` | 分支或标签（默认 `master`） |
+| `UVCPP_VERSION` | libuvcpp 预编译包版本（Linux/Windows，默认 `1.8.4`） |
+| `UVCPP_REPO` | libuvcpp 仓库地址（macOS 源码构建使用） |
+| `UVCPP_REF` | 分支或标签（macOS 默认 `master`） |
 
 本地打包：
 

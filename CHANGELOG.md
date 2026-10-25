@@ -3,6 +3,29 @@
 moLink Server 使用本仓库的 `v*` 标签发布，与桌面客户端
 （[Antruly/molink](https://github.com/Antruly/molink)）的版本线相互独立。
 
+## [Unreleased]
+
+### Added
+
+- 默认启用 HTTPS：首次启动在 `cer/` 下自动生成自签名证书（覆盖主机名、
+  `localhost` 与本机地址），设备面与管理面共用一套证书；`--no-tls` 可关闭
+- 管理页「设置 → HTTPS 证书」：查看主题/有效期/SAN/指纹，关闭证书、上传自己的
+  PEM 证书与私钥、重新生成自签名证书；修改写回配置文件，重启服务后生效
+- 安装目录附带 `config.example.json`，默认把证书与私钥指向同目录的 `cer/`
+- 配置新增 `tls` 段（`enabled` / `cert` / `key` / `auto_self_signed`）；
+  `MOLINK_SERVER_TLS` 环境变量
+- 注册与心跳接受客户端上报的局域网地址；`GET /v1/devices` 仅在请求方与目标共享
+  同一公网 IP（或请求来自回环）时返回该地址，外网查询不会泄露内网地址
+- P2P 呼叫信令：`/v1/connect`、`/v1/connect/pending`、`/v1/connect/answer`、
+  `/v1/connect/status`、`/v1/connect/candidates`、`/v1/connect/close`；
+  内存会话、90 秒过期、单设备 8 个并发、设备凭据鉴权与限速。设计见
+  `docs/p2p-relay.md`
+
+### Changed
+
+- 相对证书路径改为以 `config.json` 所在目录为基准
+- 旧的 `tls/fullchain.pem` + `privkey.pem` 目录约定保留，仅在 `cer/` 不存在时使用
+
 ## [0.2.1] — 2026-10-25
 
 ### Added

@@ -3,8 +3,16 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <functional>
 
 #include <cstdlib>
+#include <cstring>
+
+#if defined(_WIN32)
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#endif
 
 #include <memory>
 
@@ -59,6 +67,31 @@ std::string sanitize_platform(std::string value) {
                                    "ios",     "web",   "unknown"};
   for (const char* allowed : kAllowed) {
     if (value == allowed) return value;
+  }
+  return std::string();
+}
+
+/// A client-reported LAN address. Only numeric addresses are accepted; the
+/// directory returns it to requesters that share the same observed public IP.
+std::string sanitize_address(std::string value) {
+  value = trim(std::move(value));
+  if (value.empty() || value.size() > 64) return std::string();
+  if (value.size() > 2 && value.front() == '[' && value.back() == ']') {
+    value = value.substr(1, value.size() - 2);
+  }
+  const std::size_t scope = value.find('%');
+  if (scope != std::string::npos) value.resize(scope);
+
+  unsigned char buffer[16];
+  if (inet_pton(AF_INET, value.c_str(), buffer) == 1) {
+    static const unsigned char any[4] = {0, 0, 0, 0};
+    if (std::memcmp(buffer, any, sizeof(any)) == 0) return std::string();
+    return value;
+  }
+  if (inet_pton(AF_INET6, value.c_str(), buffer) == 1) {
+    static const unsigned char any[16] = {0};
+    if (std::memcmp(buffer, any, sizeof(any)) == 0) return std::string();
+    return value;
   }
   return std::string();
 }
@@ -139,6 +172,170 @@ void rate_limited(uvcpp::uvcpp_web_response& response, int retry_after) {
   body["message"] = "too many requests";
   body["retry_after"] = retry_after;
   send_json(response, 429, body);
+}
+
+/// Runs an authenticated device lookup on the DB executor. The callback passes
+/// an empty code on success, or an error code the route can send directly.
+using device_done = std::function<void(const std::string&, const device_record&)>;
+
+void with_device(server_runtime& runtime, const std::string& id,
+                 const std::string& token, device_done done) {
+  struct state {
+    bool ok = false;
+    bool found = false;
+    std::string error;
+    device_record device;
+  };
+  auto value = std::make_shared<state>();
+  const std::string token_hash = sha256_hex(token);
+  runtime.executor().read(
+      runtime.device_app().loop(),
+      [&runtime, id, token_hash, value](uvcpp::uvcpp_db_client& client,
+                                        std::string& error) {
+        if (!runtime.devices().find_authorized(
+                client, runtime.db().dialect(), id, token_hash, value->device,
+                value->found, error)) {
+          return false;
+        }
+        value->ok = true;
+        return true;
+      },
+      [value, done](bool ok, const std::string& error) {
+        if (!ok) {
+          log_error("device signaling lookup: %s", error.c_str());
+          done("database_unavailable", device_record{});
+        } else if (!value->found) {
+          done("invalid_token", device_record{});
+        } else {
+          done(std::string(), value->device);
+        }
+      });
+}
+
+std::vector<std::string> string_array(const json& body, const char* key) {
+  std::vector<std::string> out;
+  if (!body.contains(key) || !body[key].is_array()) return out;
+  for (const json& item : body[key]) {
+    if (item.is_string()) out.push_back(item.get<std::string>());
+  }
+  return out;
+}
+
+json signal_peer_json(const signal_peer& peer) {
+  json out;
+  out["id"] = peer.id;
+  out["display_id"] = peer.display_id.empty() ? display_id(peer.id)
+                                              : peer.display_id;
+  out["name"] = peer.name;
+  out["platform"] = peer.platform;
+  out["avatar"] = peer.avatar;
+  return out;
+}
+
+signal_peer to_signal_peer(const device_record& record) {
+  signal_peer peer;
+  peer.id = record.id;
+  peer.name = record.name;
+  peer.display_id = display_id(record.id);
+  peer.platform = record.platform;
+  peer.avatar = record.avatar;
+  return peer;
+}
+
+json signal_session_json(const signal_session_view& session) {
+  json out;
+  out["connect_id"] = session.connect_id;
+  out["from"] = signal_peer_json(session.from);
+  out["to"] = signal_peer_json(session.to);
+  out["offer"] = session.offer;
+  out["answer"] = session.answer;
+  out["from_candidates"] = session.from_candidates;
+  out["to_candidates"] = session.to_candidates;
+  out["created_ms"] = session.created_ms;
+  out["expires_ms"] = session.expires_ms;
+  out["answered"] = session.answered;
+  out["closed"] = session.closed;
+  out["expired"] = session.expired;
+  return out;
+}
+
+int signal_http_status(signal_status status) {
+  switch (status) {
+    case signal_status::ok:
+      return 200;
+    case signal_status::not_found:
+      return 404;
+    case signal_status::expired:
+    case signal_status::closed:
+    case signal_status::conflict:
+      return 409;
+    case signal_status::forbidden:
+      return 403;
+    case signal_status::too_many:
+      return 429;
+    case signal_status::invalid:
+      return 400;
+  }
+  return 400;
+}
+
+const char* signal_error_code(signal_status status) {
+  switch (status) {
+    case signal_status::ok:
+      return "ok";
+    case signal_status::not_found:
+      return "connect_not_found";
+    case signal_status::expired:
+      return "connect_expired";
+    case signal_status::closed:
+      return "connect_closed";
+    case signal_status::conflict:
+      return "connect_conflict";
+    case signal_status::forbidden:
+      return "connect_forbidden";
+    case signal_status::too_many:
+      return "connect_limit";
+    case signal_status::invalid:
+      return "bad_request";
+  }
+  return "bad_request";
+}
+
+void send_lookup_error(uvcpp::uvcpp_web_response& response,
+                       const std::string& code) {
+  if (code == "invalid_token") {
+    send_error(response, 401, "invalid_token", "unknown device or token");
+  } else {
+    send_error(response, 503, "directory_unavailable",
+               "the device directory is unavailable");
+  }
+}
+
+bool signaling_limited(server_runtime& runtime, const std::string& id,
+                       const uvcpp::uvcpp_web_request& request,
+                       uvcpp::uvcpp_web_response& response) {
+  int retry = 0;
+  const std::string key = "sig:" + request.peer_ip() + ":" + id;
+  if (!runtime.limiter().allow(key, 8.0, 60, epoch_ms(), &retry)) {
+    rate_limited(response, retry);
+    return true;
+  }
+  return false;
+}
+
+void send_signal_status(uvcpp::uvcpp_web_response& response,
+                        signal_status status) {
+  if (status == signal_status::ok) {
+    json body;
+    body["ok"] = true;
+    body["server_time"] = epoch_ms();
+    send_json(response, 200, body);
+    return;
+  }
+  send_error(response, signal_http_status(status), signal_error_code(status),
+             status == signal_status::too_many
+                 ? "too many pending connection requests"
+                 : "the signaling request could not be completed");
 }
 
 }  // namespace
@@ -229,22 +426,29 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
   auto health = [&runtime](uvcpp::uvcpp_web_request&, uvcpp::uvcpp_web_response& response,
                            uvcpp::uvcpp_web_next next) {
     auto result = std::make_shared<json>();
+    auto devices = std::make_shared<std::int64_t>(0);
     runtime.executor().read(
         runtime.device_app().loop(),
-        [](uvcpp::uvcpp_db_client& client, std::string& error) {
+        [devices](uvcpp::uvcpp_db_client& client, std::string& error) {
           const auto status = client.ping();
           if (!uvcpp::uvcpp_db_ok(status)) {
             error = client.last_error();
             return false;
           }
+          uvcpp::uvcpp_db_table table;
+          const auto count_status =
+              client.query("SELECT COUNT(*) AS n FROM devices", &table);
+          if (uvcpp::uvcpp_db_ok(count_status) && table.row_count() > 0) {
+            *devices = table.value("n").to_int64();
+          }
           return true;
         },
-        [&response, next, result, &runtime](bool ok, const std::string&) {
+        [&response, next, result, devices](bool ok, const std::string&) {
           (*result)["status"] = ok ? "ok" : "degraded";
           (*result)["service"] = MOLINK_SERVER_PRODUCT;
           (*result)["version"] = MOLINK_SERVER_VERSION;
           (*result)["database"] = ok ? "ok" : "unavailable";
-          (*result)["devices"] = 0;
+          (*result)["devices"] = *devices;
           send_json(response, ok ? 200 : 503, *result);
           next();
         });
@@ -317,6 +521,7 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
              if (version.size() > 32) version.resize(32);
              const std::string platform = sanitize_platform(field("platform"));
              const std::string avatar = sanitize_avatar(field("avatar"));
+             const std::string local_address = sanitize_address(field("address"));
 
              const std::string token = random_hex(16);
              if (token.empty()) {
@@ -338,7 +543,7 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
              state->device.platform = platform;
              state->device.avatar = avatar;
              state->device.token_hash = sha256_hex(token);
-             state->device.address.clear();
+             state->device.address = local_address;
 
              runtime.executor().write(
                  runtime.device_app().loop(),
@@ -477,6 +682,7 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                  raw_name.empty() ? std::string() : sanitize_name(raw_name);
              const std::string platform = sanitize_platform(field("platform"));
              const std::string avatar = sanitize_avatar(field("avatar"));
+             const std::string local_address = sanitize_address(field("address"));
              struct heartbeat_state {
                bool found = false;
                std::string domain;
@@ -486,12 +692,13 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
              runtime.executor().write(
                  runtime.device_app().loop(),
                  [&runtime, id, token, ip, port, version, name, platform, avatar,
-                  state](uvcpp::uvcpp_db_client& client, std::string& error) {
+                  local_address, state](uvcpp::uvcpp_db_client& client,
+                                        std::string& error) {
                    const std::string token_hash = sha256_hex(token);
                    if (!runtime.devices().heartbeat(
-                           client, runtime.db().dialect(), id, token_hash, "",
-                           ip, port, version, name, platform, avatar,
-                           state->found, error)) {
+                           client, runtime.db().dialect(), id, token_hash,
+                           local_address, ip, port, version, name, platform,
+                           avatar, state->found, error)) {
                      return false;
                    }
                    if (!state->found) return true;
@@ -824,6 +1031,8 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
       return;
     }
 
+    const std::string requester = canonical_ip(address);
+    const bool requester_loopback = is_loopback(address);
     auto records = std::make_shared<std::vector<device_record>>();
     runtime.executor().read(
         runtime.device_app().loop(),
@@ -843,8 +1052,8 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
           }
           return true;
         },
-        [&response, next, records, batch, &runtime](bool ok,
-                                                    const std::string& error) {
+        [&response, next, records, batch, &runtime, requester,
+         requester_loopback](bool ok, const std::string& error) {
           if (!ok) {
             log_error("device lookup: %s", error.c_str());
             send_error(response, 503, "database_unavailable",
@@ -889,7 +1098,12 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
           body["id"] = record.id;
           body["display_id"] = display_id(record.id);
           body["name"] = record.name;
-          body["address"] = record.address;
+          // A LAN address is only useful (and only safe to disclose) to a
+          // requester behind the same NAT as the target.
+          const bool same_nat =
+              requester_loopback ||
+              (!record.peer_ip.empty() && record.peer_ip == requester);
+          body["address"] = same_nat ? record.address : std::string();
           body["peer_ip"] = record.peer_ip;
           body["port"] = record.port;
           body["version"] = record.version;
@@ -903,6 +1117,331 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
           next();
         });
   };
+
+  // ---- P2P signaling ----------------------------------------------------
+  // Clients exchange ICE offers/answers and trickled candidates through the
+  // directory; the data path is established afterwards by the clients
+  // (libjuice) or falls back to a relay. The directory never parses the SDP.
+  app.post("/v1/connect",
+           [&runtime](uvcpp::uvcpp_web_request& request,
+                      uvcpp::uvcpp_web_response& response,
+                      uvcpp::uvcpp_web_next next) {
+             nlohmann::json body;
+             if (!parse_device_body(request, body)) {
+               send_error(response, 400, "bad_request",
+                          "a JSON body is required");
+               return;
+             }
+             auto text = [&](const char* key) -> std::string {
+               if (!body.contains(key) || !body[key].is_string()) {
+                 return std::string();
+               }
+               return trim(body[key].get<std::string>());
+             };
+             const std::string id = normalize_device_id(text("id"));
+             const std::string token = text("token");
+             const std::string target = normalize_device_id(text("target"));
+             const std::string offer = text("offer");
+             const std::vector<std::string> candidates =
+                 string_array(body, "candidates");
+             if (id.empty() || token.empty() || target.empty() ||
+                 offer.empty()) {
+               send_error(response, 400, "bad_request",
+                          "id, token, target and offer are required");
+               return;
+             }
+             if (id == target) {
+               send_error(response, 400, "bad_request",
+                          "a device cannot connect to itself");
+               return;
+             }
+             if (signaling_limited(runtime, id, request, response)) return;
+             with_device(
+                 runtime, id, token,
+                 [&runtime, target, offer, candidates, &response,
+                  next](const std::string& code, const device_record& from) {
+                   if (!code.empty()) {
+                     send_lookup_error(response, code);
+                     next();
+                     return;
+                   }
+                   struct state {
+                     bool ok = false;
+                     bool found = false;
+                     std::string error;
+                     device_record to;
+                   };
+                   auto value = std::make_shared<state>();
+                   runtime.executor().read(
+                       runtime.device_app().loop(),
+                       [&runtime, target, value](uvcpp::uvcpp_db_client& client,
+                                                 std::string& error) {
+                         if (!runtime.devices().find(
+                                 client, runtime.db().dialect(), target,
+                                 value->to, error)) {
+                           return false;
+                         }
+                         value->ok = true;
+                         value->found = !value->to.id.empty();
+                         return true;
+                       },
+                       [&runtime, from, offer, candidates, &response, next,
+                        value](bool ok, const std::string& error) {
+                         if (!ok || value == nullptr) {
+                           log_error("device connect target: %s", error.c_str());
+                           send_lookup_error(response, "database_unavailable");
+                           next();
+                           return;
+                         }
+                         if (!value->found) {
+                           send_error(response, 404, "unknown_device",
+                                      "the target device is not registered");
+                           next();
+                           return;
+                         }
+                         const int offline_after =
+                             runtime.settings().server().offline_after_seconds;
+                         if (!online(value->to, offline_after, epoch_ms())) {
+                           send_error(response, 409, "device_offline",
+                                      "the target device is offline");
+                           next();
+                           return;
+                         }
+                         signal_create request_value;
+                         request_value.from = to_signal_peer(from);
+                         request_value.to = to_signal_peer(value->to);
+                         request_value.offer = offer;
+                         request_value.candidates = candidates;
+                         std::string connect_id;
+                         std::uint64_t expires_ms = 0;
+                         const signal_status status =
+                             runtime.signaling().create(request_value,
+                                                        connect_id,
+                                                        expires_ms);
+                         if (status != signal_status::ok) {
+                           send_signal_status(response, status);
+                           next();
+                           return;
+                         }
+                         json out;
+                         out["connect_id"] = connect_id;
+                         out["expires_ms"] = expires_ms;
+                         out["server_time"] = epoch_ms();
+                         out["to"] = signal_peer_json(request_value.to);
+                         send_json(response, 200, out);
+                         next();
+                       });
+                 });
+           });
+
+  app.get("/v1/connect/pending",
+          [&runtime](uvcpp::uvcpp_web_request& request,
+                     uvcpp::uvcpp_web_response& response,
+                     uvcpp::uvcpp_web_next next) {
+            const std::string id = normalize_device_id(query(request, "id"));
+            const std::string token = query(request, "token");
+            if (id.empty() || token.empty()) {
+              send_error(response, 400, "bad_request",
+                         "id and token are required");
+              return;
+            }
+            if (signaling_limited(runtime, id, request, response)) return;
+            with_device(
+                runtime, id, token,
+                [&runtime, id, &response, next](const std::string& code,
+                                                const device_record&) {
+                  if (!code.empty()) {
+                    send_lookup_error(response, code);
+                    next();
+                    return;
+                  }
+                  std::vector<signal_session_view> sessions;
+                  const signal_status status =
+                      runtime.signaling().pending(id, sessions);
+                  if (status != signal_status::ok) {
+                    send_signal_status(response, status);
+                    next();
+                    return;
+                  }
+                  json out;
+                  out["sessions"] = json::array();
+                  for (const signal_session_view& session : sessions) {
+                    out["sessions"].push_back(signal_session_json(session));
+                  }
+                  out["server_time"] = epoch_ms();
+                  send_json(response, 200, out);
+                  next();
+                });
+          });
+
+  app.get("/v1/connect/status",
+          [&runtime](uvcpp::uvcpp_web_request& request,
+                     uvcpp::uvcpp_web_response& response,
+                     uvcpp::uvcpp_web_next next) {
+            const std::string id = normalize_device_id(query(request, "id"));
+            const std::string token = query(request, "token");
+            const std::string connect_id = query(request, "connect_id");
+            if (id.empty() || token.empty() || connect_id.empty()) {
+              send_error(response, 400, "bad_request",
+                         "id, token and connect_id are required");
+              return;
+            }
+            if (signaling_limited(runtime, id, request, response)) return;
+            with_device(
+                runtime, id, token,
+                [&runtime, id, connect_id, &response,
+                 next](const std::string& code, const device_record&) {
+                  if (!code.empty()) {
+                    send_lookup_error(response, code);
+                    next();
+                    return;
+                  }
+                  signal_session_view session;
+                  const signal_status status =
+                      runtime.signaling().find(id, connect_id, session);
+                  if (status != signal_status::ok) {
+                    send_signal_status(response, status);
+                    next();
+                    return;
+                  }
+                  json out;
+                  out["session"] = signal_session_json(session);
+                  out["server_time"] = epoch_ms();
+                  send_json(response, 200, out);
+                  next();
+                });
+          });
+
+  app.post("/v1/connect/answer",
+           [&runtime](uvcpp::uvcpp_web_request& request,
+                      uvcpp::uvcpp_web_response& response,
+                      uvcpp::uvcpp_web_next next) {
+             nlohmann::json body;
+             if (!parse_device_body(request, body)) {
+               send_error(response, 400, "bad_request",
+                          "a JSON body is required");
+               return;
+             }
+             auto text = [&](const char* key) -> std::string {
+               if (!body.contains(key) || !body[key].is_string()) {
+                 return std::string();
+               }
+               return trim(body[key].get<std::string>());
+             };
+             const std::string id = normalize_device_id(text("id"));
+             const std::string token = text("token");
+             const std::string connect_id = text("connect_id");
+             const std::string answer = text("answer");
+             const std::vector<std::string> candidates =
+                 string_array(body, "candidates");
+             if (id.empty() || token.empty() || connect_id.empty() ||
+                 answer.empty()) {
+               send_error(response, 400, "bad_request",
+                          "id, token, connect_id and answer are required");
+               return;
+             }
+             if (signaling_limited(runtime, id, request, response)) return;
+             with_device(
+                 runtime, id, token,
+                 [&runtime, id, connect_id, answer, candidates, &response,
+                  next](const std::string& code, const device_record&) {
+                   if (!code.empty()) {
+                     send_lookup_error(response, code);
+                     next();
+                     return;
+                   }
+                   const signal_status status = runtime.signaling().answer(
+                       id, connect_id, answer, candidates);
+                   send_signal_status(response, status);
+                   next();
+                 });
+           });
+
+  app.post("/v1/connect/candidates",
+           [&runtime](uvcpp::uvcpp_web_request& request,
+                      uvcpp::uvcpp_web_response& response,
+                      uvcpp::uvcpp_web_next next) {
+             nlohmann::json body;
+             if (!parse_device_body(request, body)) {
+               send_error(response, 400, "bad_request",
+                          "a JSON body is required");
+               return;
+             }
+             auto text = [&](const char* key) -> std::string {
+               if (!body.contains(key) || !body[key].is_string()) {
+                 return std::string();
+               }
+               return trim(body[key].get<std::string>());
+             };
+             const std::string id = normalize_device_id(text("id"));
+             const std::string token = text("token");
+             const std::string connect_id = text("connect_id");
+             const std::vector<std::string> candidates =
+                 string_array(body, "candidates");
+             if (id.empty() || token.empty() || connect_id.empty() ||
+                 candidates.empty()) {
+               send_error(response, 400, "bad_request",
+                          "id, token, connect_id and candidates are required");
+               return;
+             }
+             if (signaling_limited(runtime, id, request, response)) return;
+             with_device(
+                 runtime, id, token,
+                 [&runtime, id, connect_id, candidates, &response,
+                  next](const std::string& code, const device_record&) {
+                   if (!code.empty()) {
+                     send_lookup_error(response, code);
+                     next();
+                     return;
+                   }
+                   const signal_status status =
+                       runtime.signaling().add_candidates(id, connect_id,
+                                                          candidates);
+                   send_signal_status(response, status);
+                   next();
+                 });
+           });
+
+  app.post("/v1/connect/close",
+           [&runtime](uvcpp::uvcpp_web_request& request,
+                      uvcpp::uvcpp_web_response& response,
+                      uvcpp::uvcpp_web_next next) {
+             nlohmann::json body;
+             if (!parse_device_body(request, body)) {
+               send_error(response, 400, "bad_request",
+                          "a JSON body is required");
+               return;
+             }
+             auto text = [&](const char* key) -> std::string {
+               if (!body.contains(key) || !body[key].is_string()) {
+                 return std::string();
+               }
+               return trim(body[key].get<std::string>());
+             };
+             const std::string id = normalize_device_id(text("id"));
+             const std::string token = text("token");
+             const std::string connect_id = text("connect_id");
+             if (id.empty() || token.empty() || connect_id.empty()) {
+               send_error(response, 400, "bad_request",
+                          "id, token and connect_id are required");
+               return;
+             }
+             if (signaling_limited(runtime, id, request, response)) return;
+             with_device(
+                 runtime, id, token,
+                 [&runtime, id, connect_id, &response,
+                  next](const std::string& code, const device_record&) {
+                   if (!code.empty()) {
+                     send_lookup_error(response, code);
+                     next();
+                     return;
+                   }
+                   const signal_status status =
+                       runtime.signaling().close(id, connect_id);
+                   send_signal_status(response, status);
+                   next();
+                 });
+           });
 
   app.get("/v1/devices", lookup);
   app.get("/v1/devices/lookup", lookup);

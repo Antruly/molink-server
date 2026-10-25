@@ -86,8 +86,8 @@ if [ "$INSTALL_SERVICE" -eq 1 ]; then
 fi
 
 echo "moLink Server installed."
-echo "  admin console: http://127.0.0.1:28431 (first launch asks for an account)"
-echo "  device API:    http://0.0.0.0:28430"
+echo "  admin console: https://127.0.0.1:28431 (self-signed; first launch asks for an account)"
+echo "  device API:    https://0.0.0.0:28430"
 if [ "$INSTALL_SERVICE" -eq 1 ]; then
   echo "  service:       systemctl status molink-server"
 fi

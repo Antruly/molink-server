@@ -12,6 +12,17 @@ struct listener_config {
   std::string web_root;
 };
 
+/// Shared TLS settings for both listeners. `cert` and `key` are relative to
+/// the config file's directory (or the working directory when the server was
+/// started without a config file). When TLS is on and the pair is missing at
+/// startup, a self-signed certificate is generated there.
+struct tls_config {
+  bool enabled = true;
+  std::string cert = "cer/server.crt";
+  std::string key = "cer/server.key";
+  bool auto_self_signed = true;
+};
+
 struct database_config {
   std::string driver = "sqlite";
   std::string url;
@@ -33,6 +44,7 @@ struct server_config {
   std::string data_dir = "./molink-server-data";
   listener_config device;
   listener_config admin;
+  tls_config tls;
   database_config database;
   log_config log;
 

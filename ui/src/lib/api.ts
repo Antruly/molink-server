@@ -137,6 +137,33 @@ export interface ServerSettings {
   max_devices: number
 }
 
+export interface TlsCertificate {
+  found: boolean
+  self_signed: boolean
+  subject: string
+  issuer: string
+  not_before_ms: number
+  not_after_ms: number
+  dns_names: string[]
+  ip_addresses: string[]
+  fingerprint_sha256: string
+  error?: string
+}
+
+export interface TlsStatus {
+  enabled: boolean
+  running_enabled: boolean
+  auto_self_signed: boolean
+  restart_required: boolean
+  config_path: string
+  base_dir: string
+  cert: string
+  key: string
+  device_api: { tls: boolean; cert: string; key: string }
+  admin_api: { tls: boolean; cert: string; key: string }
+  certificate: TlsCertificate
+}
+
 export interface AuthResult {
   user: User
   csrf_token: string
@@ -252,6 +279,19 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(value),
     }),
+  tls: () => request<TlsStatus>('/api/admin/tls'),
+  setTlsEnabled: (enabled: boolean) =>
+    request<TlsStatus>('/api/admin/tls', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    }),
+  uploadTlsCertificate: (cert: string, key: string) =>
+    request<TlsStatus>('/api/admin/tls/certificate', {
+      method: 'POST',
+      body: JSON.stringify({ cert, key }),
+    }),
+  resetSelfSigned: () =>
+    request<TlsStatus>('/api/admin/tls/self-signed', { method: 'POST' }),
   bans: (params: URLSearchParams) => request<BanPage>(`/api/admin/bans?${params}`),
   addBan: (body: {
     target: string

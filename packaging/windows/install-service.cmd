@@ -8,5 +8,5 @@ if errorlevel 1 (
   exit /b 1
 )
 echo moLink Server service installed.
-echo Admin console: http://127.0.0.1:28431
+echo Admin console: https://127.0.0.1:28431 (self-signed)
 pause

@@ -6,7 +6,7 @@ This package contains the moLink device directory, admin console and API.
 Quick start (console):
   1. Edit config.json (next to this file) if you need different ports or data paths.
   2. Run: molink-server.exe --config config.json
-  3. Open http://127.0.0.1:28431 and create the first administrator.
+  3. Open https://127.0.0.1:28431 (self-signed; accept the warning) and create the first administrator.
 
 Install as a Windows service:
   - Run install-service.cmd as Administrator (or use the installer's service task).

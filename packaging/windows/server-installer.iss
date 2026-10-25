@@ -55,8 +55,8 @@ Source: "{#PkgDir}\config-lan.json"; DestDir: "{commonappdata}\moLink\Server"; D
 Name: "{commonappdata}\moLink\Server"; Permissions: users-modify
 
 [Icons]
-Name: "{group}\moLink Server 管理控制台"; Filename: "http://127.0.0.1:28431"; IconFilename: "{app}\molink.ico"
-Name: "{group}\卸载 moLink Server"; Filename: "{uninstallexe}"
+Name: "{group}\moLink Server 管理控制台"; Filename: "https://127.0.0.1:28431"; IconFilename: "{app}\molink.ico"
+Name: "{group}\卸载 moLink Server"; Filename: "{uninstallexe}"; IconFilename: "{app}\molink.ico"
 
 [Run]
 Filename: "{app}\molink-server.exe"; Parameters: "--install-service --config ""{commonappdata}\moLink\Server\config.json"""; Flags: runhidden waituntilterminated; Tasks: service; StatusMsg: "正在安装 moLink Server 服务…"

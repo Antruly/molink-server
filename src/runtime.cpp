@@ -13,6 +13,7 @@
 #include "db/legacy_import.h"
 #include "device_api.h"
 #include "logging.h"
+#include "tls.h"
 #include "util.h"
 #include "version.h"
 
@@ -70,6 +71,18 @@ bool server_runtime::initialize(std::string& error) {
   if (!logger::instance().open(config_.log.file, level, config_.log.max_size_mb,
                                config_.log.max_files, error)) {
     return false;
+  }
+
+  // Portable installs may be started by double-clicking the binary. Persist
+  // the implicit config.json path so the admin console has a file to rewrite
+  // when TLS settings change.
+  if (config_.config_path.empty()) config_.config_path = "config.json";
+  if (!prepare_tls(config_, error)) return false;
+  if (device_tls()) {
+    log_info("TLS enabled: device and admin listeners use %s",
+             config_.device.tls_cert.c_str());
+  } else {
+    log_info("TLS disabled: both listeners serve plain HTTP");
   }
 
   if (!db_.open(error) || !db_.migrate(error)) return false;

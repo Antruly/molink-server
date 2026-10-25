@@ -51,6 +51,10 @@ install -m 0644 "$ROOT/packaging/linux/molink-server.service" \
   "$STAGE/lib/systemd/system/molink-server.service"
 install -m 0644 "$ROOT/packaging/linux/molink-server-config.json" \
   "$STAGE/etc/molink-server/config.json"
+# Reference template next to the executable: relative cer/ paths and a
+# self-signed pair generated on first start.
+install -m 0644 "$ROOT/packaging/linux/molink-server-config.example.json" \
+  "$STAGE/opt/molink-server/config.example.json"
 install -m 0644 "$ROOT/LICENSE" "$STAGE/opt/molink-server/LICENSE"
 install -m 0755 "$ROOT/packaging/linux/install-server.sh" "$STAGE/install.sh"
 install -m 0755 "$ROOT/packaging/linux/uninstall-server.sh" "$STAGE/uninstall.sh"

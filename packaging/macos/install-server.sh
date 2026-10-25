@@ -35,4 +35,4 @@ if [ "$SERVICE" -eq 1 ]; then
     bootstrap_daemon
   fi
 fi
-echo "moLink Server installed. Admin console: http://127.0.0.1:28431"
+echo "moLink Server installed. Admin console: https://127.0.0.1:28431 (self-signed)"
