@@ -239,7 +239,7 @@ std::uint64_t asn1_time_ms(const ASN1_TIME* value) {
   return static_cast<std::uint64_t>(seconds) * 1000ull;
 }
 
-std::string name_common_name(X509_NAME* name) {
+std::string name_common_name(const X509_NAME* name) {
   if (name == nullptr) return {};
   std::array<char, 256> buffer{};
   const int length = X509_NAME_get_text_by_NID(name, NID_commonName,
@@ -432,14 +432,17 @@ bool generate_self_signed(const std::string& cert_path,
                   10LL * 365 * 24 * 3600);
   X509_set_pubkey(certificate.get(), key.get());
 
-  X509_NAME* name = X509_get_subject_name(certificate.get());
+  // OpenSSL 4 returns a const name; filling in the subject of a certificate
+  // that has not been signed yet is still the intended use.
+  const X509_NAME* name = X509_get_subject_name(certificate.get());
   if (name == nullptr) {
     error = "cannot build the certificate subject";
     return false;
   }
   const std::string subject =
       common_name.empty() ? std::string("moLink Server") : common_name;
-  if (X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_UTF8,
+  if (X509_NAME_add_entry_by_txt(const_cast<X509_NAME*>(name), "CN",
+                                 MBSTRING_UTF8,
                                  reinterpret_cast<const unsigned char*>(
                                      subject.c_str()),
                                  -1, -1, 0) != 1) {
@@ -494,8 +497,8 @@ bool certificate_info_for(const std::string& cert_path, certificate_info& out,
   x509_ptr certificate(nullptr, X509_free);
   if (!read_pem_certificate(cert_path, certificate, error)) return false;
   out.found = true;
-  X509_NAME* subject = X509_get_subject_name(certificate.get());
-  X509_NAME* issuer = X509_get_issuer_name(certificate.get());
+  const X509_NAME* subject = X509_get_subject_name(certificate.get());
+  const X509_NAME* issuer = X509_get_issuer_name(certificate.get());
   out.subject = name_common_name(subject);
   out.issuer = name_common_name(issuer);
   out.self_signed =
