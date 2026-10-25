@@ -4,7 +4,7 @@
 客户端通过设备 ID 查询地址后直连；同时提供独立的 Web 管理控制台、账号体系、
 IP 来源策略、请求限速、临时封禁和审计日志。
 
-本仓库独立于桌面端发布，使用 `v*` 标签；当前版本 `0.2.2`。设备 API 的字段、
+本仓库独立于桌面端发布，使用 `v*` 标签；当前版本 `0.3.0`。设备 API 的字段、
 错误码、限速与请求示例见 [device-api.md](device-api.md)。
 
 ## 1. 端口与组成
@@ -54,9 +54,9 @@ IP 来源策略、请求限速、临时封禁和审计日志。
 系统用户、数据目录并 `systemctl enable --now`：
 
 ```sh
-sudo dpkg -i molink-server_0.2.2_amd64.deb
+sudo dpkg -i molink-server_0.3.0_amd64.deb
 # 或
-sudo rpm -i molink-server-0.2.2-1.x86_64.rpm
+sudo rpm -i molink-server-0.3.0-1.x86_64.rpm
 
 systemctl status molink-server
 journalctl -u molink-server -f
@@ -90,7 +90,7 @@ Linux 包依赖系统 `libssl3`、`libuv1`、`zlib1g`；PostgreSQL 客户端库�
 
 ### Windows
 
-- 安装器 `moLink-Server-0.2.2-setup-x64.exe`：可选“安装为 Windows 服务”（默认勾选）、
+- 安装器 `moLink-Server-0.3.0-setup-x64.exe`：可选“安装为 Windows 服务”（默认勾选）、
   可选防火墙放行 28430、可选管理面绑定 `0.0.0.0`。配置写入
   `C:\ProgramData\moLink\Server\config.json`，卸载时保留数据。
 - 便携 zip：解压到固定目录后运行 `molink-server.exe --config config.json`；
@@ -104,7 +104,7 @@ Redistributable 即可。
 
 ### macOS
 
-- `moLink-Server-0.2.2-arm64.pkg` / `x64.pkg`（未签名）与对应的
+- `moLink-Server-0.3.0-arm64.pkg` / `x64.pkg`（未签名）与对应的
   `macos-<arch>.tar.gz`。
 - pkg 安装到 `/usr/local/molink-server`，创建 `_molink` 用户，注册
   `/Library/LaunchDaemons/com.molink.server.plist` 并启动。
