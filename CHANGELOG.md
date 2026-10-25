@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- P2P 中继数据面：`POST /v1/connect/relay` 用设备令牌换取每会话中继令牌，
+  `WS /v1/relay?connect_id=&token=` 把同一信令会话的两个设备配对并转发文本/二进制消息；
+  两端都连上时下发 `relay-ready`，一侧断开时通知另一侧，`/v1/connect/close` 会同时关闭中继。
+  中继跑在现有的 TLS 端口上，不需要新的防火墙端口。
+
 moLink Server 使用本仓库的 `v*` 标签发布，与桌面客户端
 （[Antruly/molink](https://github.com/Antruly/molink)）的版本线相互独立。
 

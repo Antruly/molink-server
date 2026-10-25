@@ -96,6 +96,7 @@ add_library(molink_server_core STATIC
   src/http_common.cpp
   src/device_api.cpp
   src/signaling.cpp
+  src/relay.cpp
   src/admin_api.cpp
   src/admin_ui.cpp
   src/runtime.cpp

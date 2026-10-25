@@ -1438,10 +1438,109 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                    }
                    const signal_status status =
                        runtime.signaling().close(id, connect_id);
+                   if (status == signal_status::ok) {
+                     runtime.relay().close_session(connect_id);
+                   }
                    send_signal_status(response, status);
                    next();
                  });
            });
+
+  // Relay data path: the device obtains a per-session token here (normal
+  // device-token auth), then connects a WebSocket to /v1/relay. Two devices of
+  // one signaling session are paired and their messages forwarded.
+  app.post("/v1/connect/relay",
+           [&runtime](uvcpp::uvcpp_web_request& request,
+                      uvcpp::uvcpp_web_response& response,
+                      uvcpp::uvcpp_web_next next) {
+             nlohmann::json body;
+             if (!parse_device_body(request, body)) {
+               send_error(response, 400, "bad_request",
+                          "a JSON body is required");
+               return;
+             }
+             auto text = [&](const char* key) -> std::string {
+               if (!body.contains(key) || !body[key].is_string()) {
+                 return std::string();
+               }
+               return trim(body[key].get<std::string>());
+             };
+             const std::string id = normalize_device_id(text("id"));
+             const std::string token = text("token");
+             const std::string connect_id = text("connect_id");
+             if (id.empty() || token.empty() || connect_id.empty()) {
+               send_error(response, 400, "bad_request",
+                          "id, token and connect_id are required");
+               return;
+             }
+             if (signaling_limited(runtime, id, request, response)) return;
+             with_device(
+                 runtime, id, token,
+                 [&runtime, id, connect_id, &response,
+                  next](const std::string& code, const device_record&) {
+                   if (!code.empty()) {
+                     send_lookup_error(response, code);
+                     next();
+                     return;
+                   }
+                   signal_session_view view;
+                   const signal_status status =
+                       runtime.signaling().find(id, connect_id, view);
+                   if (status != signal_status::ok) {
+                     send_signal_status(response, status);
+                     next();
+                     return;
+                   }
+                   relay_hub::allocation allocation;
+                   std::string error;
+                   if (!runtime.relay().allocate(connect_id, id, allocation,
+                                                 error)) {
+                     send_error(response, 409, "relay_full", error);
+                     next();
+                     return;
+                   }
+                   json out;
+                   out["connect_id"] = allocation.connect_id;
+                   out["relay_token"] = allocation.token;
+                   out["path"] = "/v1/relay";
+                   out["server_time"] = epoch_ms();
+                   send_json(response, 200, out);
+                   next();
+                 });
+           });
+
+  app.websocket("/v1/relay",
+                [&runtime](uvcpp::uvcpp_web_ws_request& request) {
+                  uvcpp::uvcpp_ws_connection* conn = request.connection();
+                  if (conn == nullptr) return;
+                  const std::string* connect_id = request.query("connect_id");
+                  const std::string* token = request.query("token");
+                  if (connect_id == nullptr || token == nullptr) {
+                    conn->close(uvcpp::ws_close_code::POLICY_VIOLATION,
+                                "missing relay credentials");
+                    return;
+                  }
+                  std::string error;
+                  if (!runtime.relay().attach(conn, *connect_id, *token,
+                                              error)) {
+                    conn->close(uvcpp::ws_close_code::POLICY_VIOLATION, error);
+                    return;
+                  }
+                  conn->on_text([&runtime, conn](const std::string& text) {
+                    runtime.relay().forward(conn, text.data(), text.size(),
+                                            true);
+                  });
+                  conn->on_binary([&runtime, conn](const std::uint8_t* data,
+                                                   std::size_t len) {
+                    runtime.relay().forward(
+                        conn, reinterpret_cast<const char*>(data), len, false);
+                  });
+                  conn->on_close(
+                      [&runtime, conn](uvcpp::ws_close_code,
+                                       const std::string&) {
+                        runtime.relay().detach(conn);
+                      });
+                });
 
   app.get("/v1/devices", lookup);
   app.get("/v1/devices/lookup", lookup);

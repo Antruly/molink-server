@@ -13,6 +13,7 @@
 #include "db/repositories.h"
 #include "security/ban_cache.h"
 #include "security/rate_limiter.h"
+#include "relay.h"
 #include "settings_cache.h"
 #include "signaling.h"
 
@@ -47,6 +48,7 @@ class server_runtime {
   ban_cache& bans() { return ban_cache_; }
   rate_limiter& limiter() { return limiter_; }
   signaling_service& signaling() { return signaling_; }
+  relay_hub& relay() { return relay_; }
   uvcpp::uvcpp_web_app& device_app() { return device_app_; }
   uvcpp::uvcpp_web_app& admin_app() { return admin_app_; }
   std::atomic<bool>& stopping() { return stopping_; }
@@ -81,6 +83,7 @@ class server_runtime {
   ban_cache ban_cache_;
   rate_limiter limiter_;
   signaling_service signaling_;
+  relay_hub relay_;
   uvcpp::uvcpp_web_app device_app_;
   uvcpp::uvcpp_web_app admin_app_;
   std::atomic<bool> stopping_{false};
