@@ -19,9 +19,9 @@ if(MOLINK_UVCPP_PREFIX)
     INTERFACE_INCLUDE_DIRECTORIES "${MOLINK_UVCPP_PREFIX}/include")
   if(WIN32)
     find_library(_uvp_implib NAMES uvcpp libuvcpp
-      PATHS "${MOLINK_UVCPP_PREFIX}/lib" NO_DEFAULT_PATH)
+      PATHS "${MOLINK_UVCPP_PREFIX}/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
     find_file(_uvp_dll NAMES uvcpp.dll libuvcpp.dll
-      PATHS "${MOLINK_UVCPP_PREFIX}/bin" NO_DEFAULT_PATH)
+      PATHS "${MOLINK_UVCPP_PREFIX}/bin" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
     if(NOT _uvp_implib OR NOT _uvp_dll)
       message(FATAL_ERROR
         "libuvcpp release archive is missing uvcpp.lib or uvcpp.dll")
@@ -31,7 +31,7 @@ if(MOLINK_UVCPP_PREFIX)
       IMPORTED_LOCATION "${_uvp_dll}")
   else()
     find_file(_uvp_so NAMES libuvcpp.so libuvcpp.dylib
-      PATHS "${MOLINK_UVCPP_PREFIX}/lib" NO_DEFAULT_PATH)
+      PATHS "${MOLINK_UVCPP_PREFIX}/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
     if(NOT _uvp_so)
       message(FATAL_ERROR
         "libuvcpp release archive is missing lib/libuvcpp.so")
