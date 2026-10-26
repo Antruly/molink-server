@@ -314,6 +314,35 @@ void server_runtime::tick() {
   const std::uint64_t now = epoch_ms();
   if (now - last_prune_ms_ < 60000) return;
   last_prune_ms_ = now;
+  {
+    // Once a minute: is the relay the thing growing? `pending_bytes` covers
+    // queued forward data, `sessions`/`bound` cover pairing leaks, and the
+    // RSS is the process footprint on Linux.
+    const relay_hub::stats_snapshot relay = relay_.stats();
+#if defined(__linux__)
+    std::uint64_t rss_kb = 0;
+    std::ifstream statm("/proc/self/statm");
+    std::uint64_t total_pages = 0;
+    std::uint64_t resident_pages = 0;
+    if (statm >> total_pages >> resident_pages && resident_pages > 0) {
+      const long page = ::sysconf(_SC_PAGESIZE);
+      if (page > 0) {
+        rss_kb = resident_pages * static_cast<std::uint64_t>(page) / 1024;
+      }
+    }
+    log_info("relay sessions=%zu bound=%zu pending=%llu KiB dropped=%llu "
+             "rss=%llu KiB",
+             relay.sessions, relay.bound,
+             static_cast<unsigned long long>(relay.pending_bytes / 1024),
+             static_cast<unsigned long long>(relay.dropped),
+             static_cast<unsigned long long>(rss_kb));
+#else
+    log_info("relay sessions=%zu bound=%zu pending=%llu KiB dropped=%llu",
+             relay.sessions, relay.bound,
+             static_cast<unsigned long long>(relay.pending_bytes / 1024),
+             static_cast<unsigned long long>(relay.dropped));
+#endif
+  }
   limiter_.prune(now);
   executor_.write(
       admin_app_.loop(),
