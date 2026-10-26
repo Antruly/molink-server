@@ -311,11 +311,31 @@ POST /v1/relay/credentials   (规划)
 
 凭据按会话签发、短期有效，避免 TURN 被当作免费代理。
 
-### 5.2 当前 WS 传输的兜底
+### 5.2 中继协议矩阵
 
-现有会话数据面是 WebSocket。在 QUIC/UDP 数据面落地前，如果需要「内网也能连」，
-可以在目录上加一个 WS 中继：双方分别与 `/v1/relay/{connect_id}` 建立 WS，服务端
-按 `connect_id` 配对并双向转发二进制帧。它只作为过渡方案，QUIC 落地后不再需要。
+`POST /v1/connect/relay` 返回每会话令牌和同一令牌可打开的端点：
+
+```json
+{ "connect_id": "...", "relay_token": "...",
+  "relay": { "preferred": ["quic", "http3", "tcp", "udp", "websocket"],
+             "endpoints": [
+               { "protocol": "tcp", "port": 28441, "secure": true },
+               { "protocol": "websocket", "path": "/v1/relay" } ] } }
+```
+
+- 响应顶层可带 `tls_cert`（设备/中继证书 PEM），客户端没有配置 CA 时用它固定 TLS。
+- `websocket`：`WS /v1/relay?connect_id=&token=`，两端配对后转发文本/二进制帧；
+  text/binary 的区分保留给 WS 两端。
+- `tcp`：TLS 流（证书同设备面）。连上后先发一行
+  `{"connect_id":"...","token":"..."}\n`，服务端在配对成功后回
+  `{"type":"relay-ready"}\n`，之后是原始 MOLK 字节流；控制消息已经在
+  `packet_type::control` 包里，中继不再区分 text/binary。
+- `quic`：ALPN `molink-relay`，握手与 TCP 相同，跑在一条双向 QUIC 流上（默认端口 28442）。
+- `http3`：`--relay-http3-port`（默认 28444），ALPN `h3`，extended CONNECT（`:protocol=websocket`）；首条文本消息是同一行 JSON 握手，之后按 WS 消息转发（可靠流，不需要分片）。需要 libuvcpp 的 HTTP/3 WebSocket API。
+- `udp`：`--relay-udp-port`（默认 28443），首包是同一行 JSON 握手，服务端按源地址配对后原样转发数据报；客户端用与 ICE 相同的 1200 字节标签分片/重组，并按每 2 ms 最多 24 个数据报限速（突发会让服务端接收缓冲溢出）；无重传，丢包由 tile-clock 修复；空闲映射 5 分钟清理。
+
+服务端对每个中继方向限制 4 MiB、全局 128 MiB 的发送积压，超限丢弃并限频告警，
+接收端通过 MOLK 的 tile-clock 修复漏掉的区域（见 §5.3）。
 
 ## 6. 安全
 

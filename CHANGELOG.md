@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.3.1] — 2026-10-27
+
+### Added
+
+- 中继数据面支持 TCP：`--relay-tcp-port`（默认 `28441`，0 关闭）在设备证书下
+  接受 TLS 连接，握手是一行 `{"connect_id":"...","token":"..."}`，之后与 WS
+  中继完全相同的配对、`relay-ready` 与字节转发。`POST /v1/connect/relay`
+  现在返回 `relay.endpoints`（协议/端口/是否 TLS），按
+  `quic → tcp → websocket` 排序；同一 `relay_token` 可打开任一端点。
+- 中继数据面支持 QUIC：`--relay-quic-port`（默认 `28442`）在设备证书下监听，
+  ALPN 为 `molink-relay`（与桌面直连的 `molink` 区分），一条双向流跑同一行握手
+  与 MOLK 字节流；ready 行与 `/api` 状态都会报告它。
+- 中继数据面支持 UDP：`--relay-udp-port`（默认 `28443`）按源地址配对两个设备，
+  数据报原样转发；首包是同一行 JSON 握手，配对后提示也是 JSON 数据报（以 `{`
+  开头，与 0x00/0x01/0x02 数据标签不冲突）。空闲映射 5 分钟后清理。数据报不
+  可靠，丢包由 MOLK 的 tile-clock 修复兜底。
+- 中继内部抽成与协议无关的 `relay_link`，WS 与流式端点共用配对、积压上限和
+  关闭通知。
+- 设备注册/心跳接受 `quic_port` 与 `tcp_port`（schema v6），
+  `GET /v1/devices?id=` 在请求方与目标同公网 IP（或回环）时一并返回
+  `address`/`port`/`quic_port`/`tcp_port`，供内网设备直接协商数据通道；
+  外网查询仍然不泄露这些字段。
+
+- 中继数据面支持 HTTP/3：`--relay-http3-port`（默认 `28444`）在设备证书下以
+  ALPN `h3` 监听，接受 extended CONNECT（`:protocol=websocket`）；首条文本消息
+  是同一行 JSON 握手，之后按 WS 消息原样转发（可靠流，无需分片）。要求
+  libuvcpp 带 HTTP/3 WebSocket API；缺失时该端点自动报不可用。
+- 中继数据面支持 HTTP/2 WebSocket（RFC 8441）：设备 web 端口开启 h2（TLS 时
+  ALPN `h2`，无证书时 h2c 先验知识），同一 `/v1/relay` 路径注册 extended
+  CONNECT 路由；首条文本消息是同一行 JSON 握手，之后按 WS 消息原样转发。
+  `POST /v1/connect/relay` 宣告 `protocol:"http2"` 端点，复用设备端口与
+  `secure` 标志。本机 h2c 与 TLS/h2 双端回环均验证 relay-ready、文本和二进制
+  双向转发。
+- `relay.endpoints` 顺序更新为
+  `quic → http3 → tcp → http2 → udp → websocket`。
+
+- 设备证书下发：schema v7 给 `devices` 增加 `tls_fingerprint`/`tls_cert`，
+  注册/心跳接受这两个字段；`GET /v1/devices?id=` 只在同公网 IP（或回环）时
+  返回它们，供客户端做 LAN 直连固定；`POST /v1/connect/relay` 也带
+  `tls_cert`，便于未配置 CA 的客户端固定中继 TLS。
+
+### Fixed
+
+- 中继链路不再无限增长内存（0.3.0 线上 OOM 的根因）：libuvcpp 的 WebSocket
+  发送队列没有上限，一侧设备停止读取（弱网、挂起的标签页、休眠的笔记本）时，
+  服务端会一直把对端发来的帧排进该连接的队列，直到进程被 OOM kill。现在每个
+  中继方向有 4 MiB 积压上限、全进程中继积压 128 MiB，超限的消息直接丢弃并限频
+  记日志；接收端恢复后靠 MOLK 的 tile-clock 补帧。实测对一个完全不读的接收端
+  灌入 3.2 GB，服务端 RSS 稳定在 24 MiB（结束后 16.8 MiB），日志按 5 秒限频
+  报告丢弃数量。
+
 ## [0.3.0] — 2026-10-25
 
 ### Added

@@ -100,25 +100,39 @@ int main() {
   device.name = "Office";
   device.peer_ip = "127.0.0.1";
   device.port = 28418;
+  device.quic_port = 28420;
+  device.tcp_port = 28421;
   device.version = "0.8.0";
   CHECK(devices.insert(*client, dialect, device, err));
   CHECK(device.id.size() == 9);
 
   bool heartbeat_found = false;
   CHECK(devices.heartbeat(*client, dialect, device.id, device.token_hash,
-                          "192.168.1.20", "127.0.0.1", 28418, "0.8.1",
-                          "Renamed", "linux", "", heartbeat_found, err));
+                          "192.168.1.20", "127.0.0.1", 28418, 28420, 28421,
+                          "aa:bb", "PEM", "0.8.1", "Renamed", "linux", "",
+                          heartbeat_found, err));
   CHECK(heartbeat_found);
-  // Omitting the port (0) must not clear the registered one.
+  // Omitting the web port (0) must not clear it. The data ports are always
+  // reported, so they stay as they were sent.
   CHECK(devices.heartbeat(*client, dialect, device.id, device.token_hash, "",
-                          "127.0.0.1", 0, "", "", "", "", heartbeat_found,
-                          err));
+                          "127.0.0.1", 0, 28420, 28421, "", "", "", "", "", "",
+                          heartbeat_found, err));
   CHECK(heartbeat_found);
   device_record refreshed;
   CHECK(devices.find(*client, dialect, device.id, refreshed, err));
   CHECK(refreshed.port == 28418);
+  CHECK(refreshed.quic_port == 28420);
+  CHECK(refreshed.tcp_port == 28421);
+  // A later heartbeat with 0 clears a data port that stopped listening.
+  CHECK(devices.heartbeat(*client, dialect, device.id, device.token_hash, "",
+                          "127.0.0.1", 0, 0, 28421, "", "", "", "", "", "",
+                          heartbeat_found, err));
+  CHECK(devices.find(*client, dialect, device.id, refreshed, err));
+  CHECK(refreshed.quic_port == 0);
+  CHECK(refreshed.tcp_port == 28421);
   CHECK(!devices.heartbeat(*client, dialect, device.id, "wrong-token", "", "",
-                           0, "", "", "", "", heartbeat_found, err) ||
+                           0, 0, 0, "", "", "", "", "", "", heartbeat_found,
+                           err) ||
         !heartbeat_found);
 
   // --- domains -----------------------------------------------------------

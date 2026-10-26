@@ -162,6 +162,18 @@ const std::vector<migration>& schema_migrations() {
         "revoked_ms INTEGER NOT NULL DEFAULT 0)",
         "ALTER TABLE devices ADD COLUMN domain_code TEXT",
         "CREATE INDEX IF NOT EXISTS idx_devices_domain ON devices(domain_code)"}},
+      {6,
+       "device data ports",
+       {"ALTER TABLE devices ADD COLUMN quic_port INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE devices ADD COLUMN tcp_port INTEGER NOT NULL DEFAULT 0"},
+       {"ALTER TABLE devices ADD COLUMN quic_port INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE devices ADD COLUMN tcp_port INTEGER NOT NULL DEFAULT 0"}},
+      {7,
+       "device certificate",
+       {"ALTER TABLE devices ADD COLUMN tls_fingerprint TEXT",
+        "ALTER TABLE devices ADD COLUMN tls_cert TEXT"},
+       {"ALTER TABLE devices ADD COLUMN tls_fingerprint TEXT",
+        "ALTER TABLE devices ADD COLUMN tls_cert TEXT"}},
   };
   return kMigrations;
 }

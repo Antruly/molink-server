@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-VERSION=${VERSION:-0.3.0}
+VERSION=${VERSION:-0.3.1}
 ARCH=${ARCH:-$(dpkg --print-architecture)}
 OUT=${OUT_DIR:-$ROOT/build/package}
 WORK=$(mktemp -d /tmp/molink-server-deb.XXXXXX)
@@ -41,6 +41,9 @@ install -d -m 0700 -o molink-server -g molink-server /var/lib/molink-server || t
 install -d -m 0750 -o molink-server -g molink-server /var/log/molink-server || true
 systemctl daemon-reload >/dev/null 2>&1 || true
 systemctl enable --now molink-server.service >/dev/null 2>&1 || true
+# An upgrade replaces the binary under a running service; restart it so the
+# new 0.3.1 build (and its relay backlog cap) is actually running.
+systemctl try-restart molink-server.service >/dev/null 2>&1 || true
 exit 0
 POSTINST
 

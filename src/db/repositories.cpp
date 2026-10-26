@@ -81,6 +81,10 @@ void fill_device(const uvcpp::uvcpp_db_row& row, device_record& out) {
   out.address = row["address"].to_text();
   out.peer_ip = row["peer_ip"].to_text();
   out.port = static_cast<int>(row["port"].to_int64());
+  out.quic_port = static_cast<int>(row["quic_port"].to_int64());
+  out.tcp_port = static_cast<int>(row["tcp_port"].to_int64());
+  out.tls_fingerprint = row["tls_fingerprint"].to_text();
+  out.tls_cert = row["tls_cert"].to_text();
   out.version = row["version"].to_text();
   out.platform = row["platform"].to_text();
   out.avatar = row["avatar"].to_text();
@@ -131,8 +135,9 @@ void fill_ban(const uvcpp::uvcpp_db_row& row, ban_record& out) {
 }
 
 const char* kDeviceColumns =
-    "id, token_hash, name, address, peer_ip, port, version, created_ms, "
-    "last_seen_ms, platform, avatar, domain_code";
+    "id, token_hash, name, address, peer_ip, port, quic_port, tcp_port, "
+    "tls_fingerprint, tls_cert, version, created_ms, last_seen_ms, platform, "
+    "avatar, domain_code";
 const char* kUserColumns =
     "id, username, username_norm, display_name, role, password_algo, "
     "password_iterations, password_salt, password_hash, created_ms, "
@@ -156,14 +161,17 @@ bool device_repository::insert(uvcpp::uvcpp_db_client& client,
     }
     const std::string sql =
         "INSERT INTO devices (id, token_hash, name, address, peer_ip, port, "
-        "version, search_key, created_ms, last_seen_ms, platform, avatar) "
+        "quic_port, tcp_port, tls_fingerprint, tls_cert, version, search_key, "
+        "created_ms, last_seen_ms, platform, avatar) "
         "VALUES (" +
         dialect.placeholder(1) + ", " + dialect.placeholder(2) + ", " +
         dialect.placeholder(3) + ", " + dialect.placeholder(4) + ", " +
         dialect.placeholder(5) + ", " + dialect.placeholder(6) + ", " +
         dialect.placeholder(7) + ", " + dialect.placeholder(8) + ", " +
         dialect.placeholder(9) + ", " + dialect.placeholder(10) + ", " +
-        dialect.placeholder(11) + ", " + dialect.placeholder(12) + ")";
+        dialect.placeholder(11) + ", " + dialect.placeholder(12) + ", " +
+        dialect.placeholder(13) + ", " + dialect.placeholder(14) + ", " +
+        dialect.placeholder(15) + ", " + dialect.placeholder(16) + ")";
     const uvcpp::uvcpp_db_params params{
         record.id,
         record.token_hash,
@@ -171,6 +179,10 @@ bool device_repository::insert(uvcpp::uvcpp_db_client& client,
         record.address,
         record.peer_ip,
         record.port,
+        record.quic_port,
+        record.tcp_port,
+        record.tls_fingerprint,
+        record.tls_cert,
         record.version,
         search_key(record.name, record.id, record.peer_ip),
         static_cast<int64_t>(record.created_ms),
@@ -200,6 +212,9 @@ bool device_repository::heartbeat(uvcpp::uvcpp_db_client& client,
                                   const std::string& token_hash,
                                   const std::string& address,
                                   const std::string& peer_ip, int port,
+                                  int quic_port, int tcp_port,
+                                  const std::string& tls_fingerprint,
+                                  const std::string& tls_cert,
                                   const std::string& version,
                                   const std::string& name,
                                   const std::string& platform,
@@ -212,15 +227,20 @@ bool device_repository::heartbeat(uvcpp::uvcpp_db_client& client,
       ", address = COALESCE(NULLIF(" + dialect.placeholder(2) +
       ", ''), address), peer_ip = " + dialect.placeholder(3) +
       ", port = COALESCE(NULLIF(" + dialect.placeholder(4) +
-      ", 0), port), version = COALESCE(NULLIF(" +
-      dialect.placeholder(5) + ", ''), version), name = COALESCE(NULLIF(" +
-      dialect.placeholder(6) + ", ''), name), platform = COALESCE(NULLIF(" +
-      dialect.placeholder(7) + ", ''), platform), avatar = COALESCE(NULLIF(" +
-      dialect.placeholder(8) + ", ''), avatar) WHERE id = " +
-      dialect.placeholder(9) + " AND token_hash = " + dialect.placeholder(10);
+      ", 0), port), quic_port = " + dialect.placeholder(5) +
+      ", tcp_port = " + dialect.placeholder(6) +
+      ", tls_fingerprint = COALESCE(NULLIF(" + dialect.placeholder(7) +
+      ", ''), tls_fingerprint), tls_cert = COALESCE(NULLIF(" +
+      dialect.placeholder(8) + ", ''), tls_cert), version = COALESCE(NULLIF(" +
+      dialect.placeholder(9) + ", ''), version), name = COALESCE(NULLIF(" +
+      dialect.placeholder(10) + ", ''), name), platform = COALESCE(NULLIF(" +
+      dialect.placeholder(11) + ", ''), platform), avatar = COALESCE(NULLIF(" +
+      dialect.placeholder(12) + ", ''), avatar) WHERE id = " +
+      dialect.placeholder(13) + " AND token_hash = " + dialect.placeholder(14);
   const uvcpp::uvcpp_db_params params{
-      static_cast<int64_t>(epoch_ms()), address, peer_ip, port, version, name,
-      platform, avatar, id, token_hash};
+      static_cast<int64_t>(epoch_ms()), address, peer_ip, port, quic_port,
+      tcp_port, tls_fingerprint, tls_cert, version, name, platform, avatar, id,
+      token_hash};
   int64_t affected = 0;
   if (!exec(client, sql, params, err, &affected)) return false;
   found = affected > 0;

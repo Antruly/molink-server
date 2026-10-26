@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
+#include "logging.h"
 #include "util.h"
 
 namespace molink {
@@ -14,19 +16,49 @@ constexpr const char* kClosedText = "{\"type\":\"relay-closed\"}";
 
 }  // namespace
 
-bool relay_hub::send(uvcpp::uvcpp_ws_connection* conn, const char* data,
+bool relay_hub::send(peer& target, relay_link* link, const char* data,
                      std::size_t len, bool text) {
-  if (conn == nullptr || (data == nullptr && len > 0)) return false;
-  if (text) {
-    conn->send_text(data, len);
-  } else {
-    conn->send_binary(data, len);
+  if (link == nullptr || (data == nullptr && len > 0)) return false;
+  if (!target.pending) {
+    target.pending = std::make_shared<std::atomic<std::uint64_t>>(0);
   }
-  return true;
-}
+  // Check *before* enqueueing. A message may overshoot the cap by its own
+  // size, which is bounded by the protocol's maximum message size, so memory
+  // stays bounded even for one huge keyframe.
+  const std::uint64_t peer_pending =
+      target.pending->load(std::memory_order_relaxed);
+  const std::uint64_t total_pending =
+      total_pending_->load(std::memory_order_relaxed);
+  if (peer_pending > kMaxPeerBacklogBytes ||
+      total_pending > kMaxTotalBacklogBytes) {
+    const std::uint64_t dropped = dropped_messages_.fetch_add(1) + 1;
+    const std::uint64_t now = epoch_ms();
+    std::uint64_t last_log = last_drop_log_ms_.load(
+        std::memory_order_relaxed);
+    if (now > last_log && now - last_log > 5000 &&
+        last_drop_log_ms_.compare_exchange_strong(last_log, now)) {
+      log_warn("relay backlog full: dropped %llu message(s); peer %llu KiB, "
+               "total %llu KiB",
+               static_cast<unsigned long long>(dropped),
+               static_cast<unsigned long long>(peer_pending / 1024),
+               static_cast<unsigned long long>(total_pending / 1024));
+    }
+    return false;
+  }
 
-void relay_hub::notify(uvcpp::uvcpp_ws_connection* conn, const char* text) {
-  if (conn != nullptr) conn->send_text(text, std::strlen(text));
+  target.pending->fetch_add(len, std::memory_order_relaxed);
+  total_pending_->fetch_add(len, std::memory_order_relaxed);
+  // The completion callback may run synchronously (dead link) or much later;
+  // it owns shared counters and never touches the session map, so it cannot
+  // deadlock against mutex_ or race with detach().
+  std::shared_ptr<std::atomic<std::uint64_t>> pending = target.pending;
+  std::shared_ptr<std::atomic<std::uint64_t>> total = total_pending_;
+  auto completed = [pending, total, len](int) {
+    pending->fetch_sub(len, std::memory_order_relaxed);
+    total->fetch_sub(len, std::memory_order_relaxed);
+  };
+  link->send_data(data, len, text, std::move(completed));
+  return true;
 }
 
 relay_hub::session* relay_hub::find_session(const std::string& connect_id) {
@@ -55,8 +87,8 @@ bool relay_hub::allocate(const std::string& connect_id,
   std::lock_guard<std::mutex> lock(mutex_);
   const std::uint64_t now = epoch_ms();
   for (auto it = sessions_.begin(); it != sessions_.end();) {
-    const bool unused = it->second.sides[0].conn == nullptr &&
-                        it->second.sides[1].conn == nullptr;
+    const bool unused = it->second.sides[0].link == nullptr &&
+                        it->second.sides[1].link == nullptr;
     if (unused && now > it->second.created_ms &&
         now - it->second.created_ms > kUnusedSessionTtlMs) {
       it = sessions_.erase(it);
@@ -70,6 +102,10 @@ bool relay_hub::allocate(const std::string& connect_id,
 
   for (int i = 0; i < 2; ++i) {
     if (value.sides[i].device_id == device_id) {
+      if (!value.sides[i].pending) {
+        value.sides[i].pending =
+            std::make_shared<std::atomic<std::uint64_t>>(0);
+      }
       out.connect_id = connect_id;
       out.token = value.sides[i].token;
       return true;
@@ -80,6 +116,8 @@ bool relay_hub::allocate(const std::string& connect_id,
       value.sides[i].device_id = device_id;
       value.sides[i].token = random_hex(24);
       value.sides[i].updated_ms = now;
+      value.sides[i].pending =
+          std::make_shared<std::atomic<std::uint64_t>>(0);
       out.connect_id = connect_id;
       out.token = value.sides[i].token;
       return true;
@@ -89,10 +127,9 @@ bool relay_hub::allocate(const std::string& connect_id,
   return false;
 }
 
-bool relay_hub::attach(uvcpp::uvcpp_ws_connection* conn,
-                       const std::string& connect_id, const std::string& token,
-                       std::string& error) {
-  if (conn == nullptr || connect_id.empty() || token.empty()) {
+bool relay_hub::attach(relay_link* link, const std::string& connect_id,
+                       const std::string& token, std::string& error) {
+  if (link == nullptr || connect_id.empty() || token.empty()) {
     error = "missing relay credentials";
     return false;
   }
@@ -108,24 +145,24 @@ bool relay_hub::attach(uvcpp::uvcpp_ws_connection* conn,
     error = "invalid relay token";
     return false;
   }
-  if (entry->conn != nullptr && entry->conn != conn) {
+  if (entry->link != nullptr && entry->link != link) {
     error = "relay token already in use";
     return false;
   }
-  entry->conn = conn;
+  entry->link = link;
   entry->updated_ms = epoch_ms();
-  bound_[conn] = {connect_id, side};
+  bound_[link] = {connect_id, side};
 
   peer& other = value->sides[side == 0 ? 1 : 0];
-  if (other.conn != nullptr) {
-    notify(entry->conn, kReadyText);
-    notify(other.conn, kReadyText);
+  if (other.link != nullptr) {
+    entry->link->send_notice(kReadyText);
+    other.link->send_notice(kReadyText);
   }
   return true;
 }
 
-bool relay_hub::forward(uvcpp::uvcpp_ws_connection* from, const char* data,
-                        std::size_t len, bool text) {
+bool relay_hub::forward(relay_link* from, const char* data, std::size_t len,
+                        bool text) {
   std::lock_guard<std::mutex> lock(mutex_);
   auto bound = bound_.find(from);
   if (bound == bound_.end()) return false;
@@ -133,16 +170,16 @@ bool relay_hub::forward(uvcpp::uvcpp_ws_connection* from, const char* data,
   if (value == nullptr) return false;
   const int side = bound->second.second;
   peer& other = value->sides[side == 0 ? 1 : 0];
-  if (other.conn == nullptr) return false;
+  if (other.link == nullptr) return false;
   other.updated_ms = epoch_ms();
-  return send(other.conn, data, len, text);
+  return send(other, other.link, data, len, text);
 }
 
-void relay_hub::detach(uvcpp::uvcpp_ws_connection* conn) {
-  uvcpp::uvcpp_ws_connection* other_conn = nullptr;
+void relay_hub::detach(relay_link* link) {
+  relay_link* other_link = nullptr;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto bound = bound_.find(conn);
+    auto bound = bound_.find(link);
     if (bound == bound_.end()) return;
     const std::string connect_id = bound->second.first;
     const int side = bound->second.second;
@@ -150,34 +187,34 @@ void relay_hub::detach(uvcpp::uvcpp_ws_connection* conn) {
     auto it = sessions_.find(connect_id);
     if (it == sessions_.end()) return;
     session& value = it->second;
-    value.sides[side].conn = nullptr;
+    value.sides[side].link = nullptr;
     peer& other = value.sides[side == 0 ? 1 : 0];
-    other_conn = other.conn;
-    if (other_conn == nullptr) sessions_.erase(it);
+    other_link = other.link;
+    if (other_link == nullptr) sessions_.erase(it);
   }
-  notify(other_conn, kClosedText);
+  if (other_link != nullptr) other_link->send_notice(kClosedText);
 }
 
 void relay_hub::close_session(const std::string& connect_id) {
-  uvcpp::uvcpp_ws_connection* first = nullptr;
-  uvcpp::uvcpp_ws_connection* second = nullptr;
+  relay_link* first = nullptr;
+  relay_link* second = nullptr;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = sessions_.find(connect_id);
     if (it == sessions_.end()) return;
-    first = it->second.sides[0].conn;
-    second = it->second.sides[1].conn;
+    first = it->second.sides[0].link;
+    second = it->second.sides[1].link;
     if (first != nullptr) bound_.erase(first);
     if (second != nullptr) bound_.erase(second);
     sessions_.erase(it);
   }
   if (first != nullptr) {
-    notify(first, kClosedText);
-    first->close(uvcpp::ws_close_code::NORMAL, "relay closed");
+    first->send_notice(kClosedText);
+    first->close_link("relay closed");
   }
   if (second != nullptr && second != first) {
-    notify(second, kClosedText);
-    second->close(uvcpp::ws_close_code::NORMAL, "relay closed");
+    second->send_notice(kClosedText);
+    second->close_link("relay closed");
   }
 }
 

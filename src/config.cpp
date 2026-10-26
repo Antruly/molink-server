@@ -91,6 +91,16 @@ bool apply_json(const std::string& path, server_config& cfg, std::string& err) {
     cfg.allow_insecure_admin =
         a.value("allow_insecure_remote", cfg.allow_insecure_admin);
   }
+  if (document.contains("relay") && document["relay"].is_object()) {
+    const json& r = document["relay"];
+    if (!json_port(r, "tcp_port", cfg.relay.tcp_port) ||
+        !json_port(r, "quic_port", cfg.relay.quic_port) ||
+        !json_port(r, "udp_port", cfg.relay.udp_port) ||
+        !json_port(r, "http3_port", cfg.relay.http3_port)) {
+      err = "relay ports must be 0..65535";
+      return false;
+    }
+  }
   if (document.contains("tls") && document["tls"].is_object()) {
     const json& t = document["tls"];
     if (t.contains("enabled") && t["enabled"].is_boolean()) {
@@ -138,6 +148,10 @@ void apply_environment(server_config& cfg) {
   apply_int("MOLINK_SERVER_PORT", cfg.device.port);
   apply("MOLINK_SERVER_ADMIN_HOST", cfg.admin.host);
   apply_int("MOLINK_SERVER_ADMIN_PORT", cfg.admin.port);
+  apply_int("MOLINK_SERVER_RELAY_TCP_PORT", cfg.relay.tcp_port);
+  apply_int("MOLINK_SERVER_RELAY_QUIC_PORT", cfg.relay.quic_port);
+  apply_int("MOLINK_SERVER_RELAY_UDP_PORT", cfg.relay.udp_port);
+  apply_int("MOLINK_SERVER_RELAY_HTTP3_PORT", cfg.relay.http3_port);
   apply("MOLINK_SERVER_REGISTRATION_TOKEN", cfg.registration_token);
   apply("MOLINK_SERVER_PUBLIC_URL", cfg.public_url);
   const std::string tls = env_string("MOLINK_SERVER_TLS");
@@ -207,6 +221,14 @@ bool parse_cli(int argc, char** argv, server_config& cfg, std::string& err) {
       if (!next("--admin-host", cfg.admin.host)) return false;
     } else if (arg == "--admin-port") {
       if (!next_int("--admin-port", cfg.admin.port)) return false;
+    } else if (arg == "--relay-tcp-port") {
+      if (!next_int("--relay-tcp-port", cfg.relay.tcp_port)) return false;
+    } else if (arg == "--relay-quic-port") {
+      if (!next_int("--relay-quic-port", cfg.relay.quic_port)) return false;
+    } else if (arg == "--relay-udp-port") {
+      if (!next_int("--relay-udp-port", cfg.relay.udp_port)) return false;
+    } else if (arg == "--relay-http3-port") {
+      if (!next_int("--relay-http3-port", cfg.relay.http3_port)) return false;
     } else if (arg == "--admin-tls-cert") {
       if (!next("--admin-tls-cert", cfg.admin.tls_cert)) return false;
     } else if (arg == "--admin-tls-key") {
@@ -289,6 +311,19 @@ bool validate(const server_config& cfg, std::string& err) {
   }
   if (cfg.device.port != 0 && cfg.device.port == cfg.admin.port) {
     err = "device and admin ports must differ";
+    return false;
+  }
+  for (int relay_port : {cfg.relay.tcp_port, cfg.relay.quic_port,
+                         cfg.relay.udp_port, cfg.relay.http3_port}) {
+    if (relay_port < 0 || relay_port > 65535) {
+      err = "relay ports must be 0..65535";
+      return false;
+    }
+  }
+  if (cfg.relay.tcp_port != 0 &&
+      (cfg.relay.tcp_port == cfg.device.port ||
+       cfg.relay.tcp_port == cfg.admin.port)) {
+    err = "the relay TCP port must differ from the web and admin ports";
     return false;
   }
   if (cfg.device.tls_cert.empty() != cfg.device.tls_key.empty()) {

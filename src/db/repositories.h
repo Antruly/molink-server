@@ -19,7 +19,10 @@ class device_repository {
               device_record& record, std::string& err) const;
   bool heartbeat(uvcpp::uvcpp_db_client& client, const sql_dialect& dialect,
                  const std::string& id, const std::string& token_hash,
-                 const std::string& address, const std::string& peer_ip, int port,
+                 const std::string& address, const std::string& peer_ip,
+                 int port, int quic_port, int tcp_port,
+                 const std::string& tls_fingerprint,
+                 const std::string& tls_cert,
                  const std::string& version, const std::string& name,
                  const std::string& platform, const std::string& avatar,
                  bool& found, std::string& err) const;

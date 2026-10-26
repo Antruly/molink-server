@@ -30,3 +30,7 @@ server-data/
 .vscode/
 .idea/
 *.swp
+
+# Local build trees and generated certificates
+build-*/
+cer/

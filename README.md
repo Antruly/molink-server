@@ -7,7 +7,7 @@
 moLink 的设备目录与自托管管理服务：客户端在这里注册与心跳，按设备 ID 或域组
 （频道）互相发现，然后建立直连；服务端同时提供 Web 管理控制台、账号与安全策略。
 
-当前版本 **0.3.0**。本仓库独立于桌面客户端
+当前版本 **0.3.1**。本仓库独立于桌面客户端
 （[Antruly/molink](https://github.com/Antruly/molink)），使用自己的 `v*` 标签
 发布，服务端与客户端不再共用版本线。
 
@@ -89,6 +89,9 @@ cd ui && pnpm install --frozen-lockfile && pnpm build
 # 首次启动会在 ./cer/ 下自动生成自签名证书
 # 管理控制台：https://127.0.0.1:28431 （浏览器会提示自签名证书）
 # 设备 API：  https://127.0.0.1:28430
+# 中继：      quic://127.0.0.1:28442（TLS） / tcp://127.0.0.1:28441（TLS）
+#            https://127.0.0.1:28444（HTTP/3 WebSocket）
+#            udp://127.0.0.1:28443（无连接，丢包由上层修复）
 ```
 
 默认启用 HTTPS。需要纯 HTTP 时加 `--no-tls`，或在管理页「设置 → HTTPS 证书」
@@ -112,7 +115,9 @@ cd ui && pnpm install --frozen-lockfile && pnpm build
     "auto_self_signed": true
   },
   "device": { "host": "0.0.0.0", "port": 28430 },
-  "admin":  { "host": "127.0.0.1", "port": 28431 }
+  "admin":  { "host": "127.0.0.1", "port": 28431 },
+  "relay":  { "tcp_port": 28441, "quic_port": 28442, "udp_port": 28443,
+              "http3_port": 28444 }
 }
 ```
 
@@ -255,13 +260,13 @@ pnpm build
 
 ## 打包与发布
 
-推送 `v*` 标签（例如 `v0.3.0`）触发
+推送 `v*` 标签（例如 `v0.3.1`）触发
 [`.github/workflows/release.yml`](.github/workflows/release.yml)，在
 Linux / Windows / macOS 上并行构建并上传安装包。CI 需要的仓库变量：
 
 | 变量 | 说明 |
 |---|---|
-| `UVCPP_VERSION` | libuvcpp 预编译包版本（Linux/Windows，默认 `1.8.5`） |
+| `UVCPP_VERSION` | libuvcpp 预编译包版本（Linux/Windows，默认 `1.8.6`） |
 | `UVCPP_REPO` | libuvcpp 仓库地址（macOS 源码构建使用） |
 | `UVCPP_REF` | 分支或标签（macOS 默认 `master`） |
 

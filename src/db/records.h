@@ -14,6 +14,12 @@ struct device_record {
   std::string address;
   std::string peer_ip;
   int port = 0;
+  /// LAN-reachable data ports reported by the core; 0 when unknown.
+  int quic_port = 0;
+  int tcp_port = 0;
+  /// Device certificate advertised for peer pinning (PEM + SHA-256).
+  std::string tls_fingerprint;
+  std::string tls_cert;
   std::string version;
   std::string platform;
   std::string avatar;

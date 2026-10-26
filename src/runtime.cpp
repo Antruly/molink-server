@@ -4,6 +4,10 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <future>
+#include <iterator>
+#include <memory>
 #include <thread>
 
 #include <uvcpp/uvcpp_threadpool.h>
@@ -134,15 +138,37 @@ bool server_runtime::initialize(std::string& error) {
                          MOLINK_SERVER_VERSION)
       .set_access_log(false)
       .set_max_body_size(128u * 1024u)
-      .set_http2_enabled(false);
+      // HTTP/2 carries the WebSocket relay leg (RFC 8441). ALPN h2 is used
+      // when the device listener has a certificate; a plain listener falls
+      // back to h2c prior knowledge.
+      .set_http2_enabled(true);
   if (!config_.device.tls_cert.empty()) {
     device_app_.enable_ssl(config_.device.tls_cert, config_.device.tls_key);
     if (!device_app_.ssl_error().empty()) {
       error = "device TLS: " + device_app_.ssl_error();
       return false;
     }
+  } else {
+    device_app_.set_h2c_enabled(true);
   }
   register_device_routes(device_app_, *this);
+  relay_tcp_ =
+      std::make_unique<relay_tcp_server>(device_app_.loop(), relay_);
+  relay_quic_ =
+      std::make_unique<relay_quic_server>(device_app_.loop(), relay_);
+  relay_udp_ =
+      std::make_unique<relay_udp_server>(device_app_.loop(), relay_);
+  if (!config_.device.tls_cert.empty()) {
+    std::ifstream cert_file(config_.device.tls_cert, std::ios::binary);
+    if (cert_file) {
+      device_cert_pem_.assign(std::istreambuf_iterator<char>(cert_file),
+                              std::istreambuf_iterator<char>());
+    }
+  }
+  relay_h3_ = std::make_unique<relay_h3_server>(
+      device_app_.loop(), relay_, [this](std::function<void()> fn) {
+        device_app_.post(std::move(fn));
+      });
 
   admin_app_.set_host(config_.admin.host)
       .set_port(config_.admin.port)
@@ -187,6 +213,86 @@ bool server_runtime::start(std::string& error) {
     error = "cannot start the device listener (" + std::to_string(rc) + ")";
     return false;
   }
+  if (relay_tcp_ && config_.relay.tcp_port != 0) {
+    // The endpoint creates UV handles, so start it on the device loop.
+    auto started = std::make_shared<std::promise<std::string>>();
+    auto started_future = started->get_future();
+    relay_tcp_server* server = relay_tcp_.get();
+    const std::string host = config_.device.host;
+    const int port = config_.relay.tcp_port;
+    const std::string cert = config_.device.tls_cert;
+    const std::string key = config_.device.tls_key;
+    device_app_.post([server, host, port, cert, key, started] {
+      std::string error;
+      const bool ok = server->start(host, port, cert, key, error);
+      started->set_value(ok ? std::string() : error);
+    });
+    const std::string relay_error = started_future.get();
+    if (relay_error.empty()) {
+      log_info("relay TCP listening on %s:%d (%s)", host.c_str(), port,
+               relay_tcp_->secure() ? "TLS" : "plain");
+    } else {
+      log_warn("%s", relay_error.c_str());
+    }
+  }
+  if (relay_quic_ && config_.relay.quic_port != 0) {
+    auto started = std::make_shared<std::promise<std::string>>();
+    auto started_future = started->get_future();
+    relay_quic_server* server = relay_quic_.get();
+    const std::string host = config_.device.host;
+    const int port = config_.relay.quic_port;
+    const std::string cert = config_.device.tls_cert;
+    const std::string key = config_.device.tls_key;
+    device_app_.post([server, host, port, cert, key, started] {
+      std::string error;
+      const bool ok = server->start(host, port, cert, key, error);
+      started->set_value(ok ? std::string() : error);
+    });
+    const std::string relay_error = started_future.get();
+    if (relay_error.empty()) {
+      log_info("relay QUIC listening on %s:%d", host.c_str(), port);
+    } else {
+      log_warn("%s", relay_error.c_str());
+    }
+  }
+  if (relay_udp_ && config_.relay.udp_port != 0) {
+    auto started = std::make_shared<std::promise<std::string>>();
+    auto started_future = started->get_future();
+    relay_udp_server* server = relay_udp_.get();
+    const std::string host = config_.device.host;
+    const int port = config_.relay.udp_port;
+    device_app_.post([server, host, port, started] {
+      std::string error;
+      const bool ok = server->start(host, port, error);
+      started->set_value(ok ? std::string() : error);
+    });
+    const std::string relay_error = started_future.get();
+    if (relay_error.empty()) {
+      log_info("relay UDP listening on %s:%d", host.c_str(), port);
+    } else {
+      log_warn("%s", relay_error.c_str());
+    }
+  }
+  if (relay_h3_ && config_.relay.http3_port != 0) {
+    auto started = std::make_shared<std::promise<std::string>>();
+    auto started_future = started->get_future();
+    relay_h3_server* server = relay_h3_.get();
+    const std::string host = config_.device.host;
+    const int port = config_.relay.http3_port;
+    const std::string cert = config_.device.tls_cert;
+    const std::string key = config_.device.tls_key;
+    device_app_.post([server, host, port, cert, key, started] {
+      std::string error;
+      const bool ok = server->start(host, port, cert, key, error);
+      started->set_value(ok ? std::string() : error);
+    });
+    const std::string relay_error = started_future.get();
+    if (relay_error.empty()) {
+      log_info("relay HTTP/3 listening on %s:%d", host.c_str(), port);
+    } else {
+      log_warn("%s", relay_error.c_str());
+    }
+  }
   started_ = true;
   started_ms_ = epoch_ms();
   if (config_.print_ready) {
@@ -194,10 +300,19 @@ bool server_runtime::start(std::string& error) {
         "{\"event\":\"ready\",\"service\":\"%s\",\"version\":\"%s\","
         "\"pid\":%ld,\"device\":{\"host\":\"%s\",\"port\":%d},"
         "\"admin\":{\"host\":\"%s\",\"port\":%d},"
+        "\"relay\":{\"tcp\":{\"port\":%d,\"secure\":%s,\"listening\":%s},"
+        "\"quic\":{\"port\":%d,\"listening\":%s},"
+        "\"udp\":{\"port\":%d,\"listening\":%s},"
+        "\"http3\":{\"port\":%d,\"listening\":%s}},"
         "\"database\":\"%s\",\"ui\":\"%s\"}\n",
         MOLINK_SERVER_PRODUCT, MOLINK_SERVER_VERSION,
         static_cast<long>(MOLINK_PID), config_.device.host.c_str(),
         config_.device.port, config_.admin.host.c_str(), config_.admin.port,
+        relay_tcp_port(), relay_tcp_secure() ? "true" : "false",
+        relay_tcp_listening() ? "true" : "false", relay_quic_port(),
+        relay_quic_listening() ? "true" : "false", relay_udp_port(),
+        relay_udp_listening() ? "true" : "false", relay_h3_port(),
+        relay_h3_listening() ? "true" : "false",
         db_driver_name(db_.dialect().driver()), ui_root_.c_str());
     std::fflush(stdout);
   }
@@ -244,6 +359,23 @@ void server_runtime::shutdown() {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   if (started_) {
+    if (relay_tcp_) {
+      // Close the relay endpoint on the loop thread before it goes away.
+      auto stopped = std::make_shared<std::promise<void>>();
+      auto stopped_future = stopped->get_future();
+      relay_tcp_server* tcp = relay_tcp_.get();
+      relay_quic_server* quic = relay_quic_.get();
+      relay_udp_server* udp = relay_udp_.get();
+      relay_h3_server* h3 = relay_h3_.get();
+      device_app_.post([tcp, quic, udp, h3, stopped] {
+        tcp->stop();
+        if (quic) quic->stop();
+        if (udp) udp->stop();
+        if (h3) h3->stop();
+        stopped->set_value();
+      });
+      stopped_future.wait_for(std::chrono::seconds(2));
+    }
     device_app_.stop();
     admin_app_.stop();
     device_app_.join();
@@ -252,6 +384,42 @@ void server_runtime::shutdown() {
   executor_.wait_idle();
   db_.close();
   logger::instance().flush();
+}
+
+bool server_runtime::relay_tcp_listening() const {
+  return relay_tcp_ && relay_tcp_->listening();
+}
+
+int server_runtime::relay_tcp_port() const {
+  return relay_tcp_ ? relay_tcp_->port() : 0;
+}
+
+bool server_runtime::relay_tcp_secure() const {
+  return relay_tcp_ && relay_tcp_->secure();
+}
+
+bool server_runtime::relay_quic_listening() const {
+  return relay_quic_ && relay_quic_->listening();
+}
+
+int server_runtime::relay_quic_port() const {
+  return relay_quic_ ? relay_quic_->port() : 0;
+}
+
+bool server_runtime::relay_udp_listening() const {
+  return relay_udp_ && relay_udp_->listening();
+}
+
+int server_runtime::relay_udp_port() const {
+  return relay_udp_ ? relay_udp_->port() : 0;
+}
+
+bool server_runtime::relay_h3_listening() const {
+  return relay_h3_ && relay_h3_->listening();
+}
+
+int server_runtime::relay_h3_port() const {
+  return relay_h3_ ? relay_h3_->port() : 0;
 }
 
 void server_runtime::audit(const std::string& event, const std::string& result,

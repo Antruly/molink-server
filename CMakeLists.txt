@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(molink-server VERSION 0.3.0 LANGUAGES CXX)
+project(molink-server VERSION 0.3.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,6 +78,13 @@ if(_uvp_definitions AND NOT "${_uvp_definitions}" MATCHES "UVCPP_DB_ENABLE=1")
     "-DUVCPP_DB_SQLITE_FROM_SOURCE=ON")
 endif()
 
+# HTTP/3 relay needs the h3 WebSocket header shipped by libuvcpp 1.8.4+.
+set(MOLINK_SERVER_HAVE_H3_WS 0)
+if(_uvp_prefix AND EXISTS
+   "${_uvp_prefix}/include/http3/uvcpp_h3_ws_connection.h")
+  set(MOLINK_SERVER_HAVE_H3_WS 1)
+endif()
+
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -97,6 +104,10 @@ add_library(molink_server_core STATIC
   src/device_api.cpp
   src/signaling.cpp
   src/relay.cpp
+  src/relay_tcp.cpp
+  src/relay_quic.cpp
+  src/relay_udp.cpp
+  src/relay_h3.cpp
   src/admin_api.cpp
   src/admin_ui.cpp
   src/runtime.cpp
@@ -109,6 +120,8 @@ add_library(molink_server_core STATIC
   src/auth/auth_service.cpp
 )
 target_include_directories(molink_server_core PUBLIC src)
+target_compile_definitions(molink_server_core PRIVATE
+  MOLINK_SERVER_HAVE_H3_WS=${MOLINK_SERVER_HAVE_H3_WS})
 target_link_libraries(molink_server_core PUBLIC
   ${UVP_UVCPP_TARGET}
   OpenSSL::Crypto

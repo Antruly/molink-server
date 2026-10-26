@@ -16,6 +16,8 @@
 
 #include <memory>
 
+#include <webapp/uvcpp_web_ws.h>
+
 #include "http_common.h"
 #include "logging.h"
 #include "runtime.h"
@@ -338,6 +340,77 @@ void send_signal_status(uvcpp::uvcpp_web_response& response,
                  : "the signaling request could not be completed");
 }
 
+/// Adapts a WebSocket connection to relay_hub's protocol-independent link.
+/// The WebSocket handler owns one via shared_ptr and drops the connection
+/// pointer in its close callback before the framework recycles it.
+class ws_relay_link final : public relay_link {
+ public:
+  explicit ws_relay_link(uvcpp::uvcpp_ws_connection* conn) : conn_(conn) {}
+
+  void send_data(const char* data, std::size_t len, bool text,
+                 std::function<void(int)> done) override {
+    if (conn_ == nullptr) {
+      if (done) done(-1);
+      return;
+    }
+    if (text) {
+      conn_->send_text(data, len, std::move(done));
+    } else {
+      conn_->send_binary(data, len, std::move(done));
+    }
+  }
+
+  void send_notice(const std::string& json) override {
+    if (conn_ != nullptr) conn_->send_text(json.data(), json.size());
+  }
+
+  void close_link(const std::string& reason) override {
+    if (conn_ != nullptr) {
+      conn_->close(uvcpp::ws_close_code::NORMAL, reason);
+    }
+  }
+
+  void detach() { conn_ = nullptr; }
+
+ private:
+  uvcpp::uvcpp_ws_connection* conn_;
+};
+
+/// The same relay link on an HTTP/2 extended-CONNECT WebSocket. The session is
+/// framework-owned; detach() runs from its close callback before the framework
+/// recycles it.
+class web_ws_relay_link final : public relay_link {
+ public:
+  explicit web_ws_relay_link(uvcpp::uvcpp_web_ws_session* session)
+      : session_(session) {}
+
+  void send_data(const char* data, std::size_t len, bool text,
+                 std::function<void(int)> done) override {
+    if (session_ == nullptr) {
+      if (done) done(-1);
+      return;
+    }
+    const int status = text ? session_->send_text(data, len)
+                            : session_->send_binary(data, len);
+    if (done) done(status == 0 ? 0 : status);
+  }
+
+  void send_notice(const std::string& json) override {
+    if (session_ != nullptr) session_->send_text(json.data(), json.size());
+  }
+
+  void close_link(const std::string& reason) override {
+    if (session_ != nullptr) {
+      session_->close(uvcpp::ws_close_code::NORMAL, reason);
+    }
+  }
+
+  void detach() { session_ = nullptr; }
+
+ private:
+  uvcpp::uvcpp_web_ws_session* session_;
+};
+
 }  // namespace
 
 void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) {
@@ -517,11 +590,23 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                send_error(response, 400, "bad_port", "port must be 1..65535");
                return;
              }
+             const int quic_port = field_int("quic_port", 0);
+             const int tcp_port = field_int("tcp_port", 0);
+             if (quic_port < 0 || quic_port > 65535 || tcp_port < 0 ||
+                 tcp_port > 65535) {
+               send_error(response, 400, "bad_port",
+                          "data ports must be 0..65535");
+               return;
+             }
              std::string version = field("version");
              if (version.size() > 32) version.resize(32);
              const std::string platform = sanitize_platform(field("platform"));
              const std::string avatar = sanitize_avatar(field("avatar"));
              const std::string local_address = sanitize_address(field("address"));
+             std::string tls_fingerprint = field("tls_fingerprint");
+             if (tls_fingerprint.size() > 200) tls_fingerprint.clear();
+             std::string tls_cert = field("tls_cert");
+             if (tls_cert.size() > 8192) tls_cert.clear();
 
              const std::string token = random_hex(16);
              if (token.empty()) {
@@ -539,6 +624,10 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
              state->device.name = name;
              state->device.peer_ip = ip;
              state->device.port = port;
+             state->device.quic_port = quic_port;
+             state->device.tcp_port = tcp_port;
+             state->device.tls_fingerprint = tls_fingerprint;
+             state->device.tls_cert = tls_cert;
              state->device.version = version;
              state->device.platform = platform;
              state->device.avatar = avatar;
@@ -674,6 +763,14 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                return;
              }
              const int port = field_int("port", 0);
+             const int quic_port = field_int("quic_port", 0);
+             const int tcp_port = field_int("tcp_port", 0);
+             if (quic_port < 0 || quic_port > 65535 || tcp_port < 0 ||
+                 tcp_port > 65535) {
+               send_error(response, 400, "bad_port",
+                          "data ports must be 0..65535");
+               return;
+             }
              const std::string version = field("version");
              // An omitted name must stay omitted: sanitize_name maps empty to
              // "device", which would overwrite the registered name.
@@ -683,6 +780,10 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
              const std::string platform = sanitize_platform(field("platform"));
              const std::string avatar = sanitize_avatar(field("avatar"));
              const std::string local_address = sanitize_address(field("address"));
+             std::string tls_fingerprint = field("tls_fingerprint");
+             if (tls_fingerprint.size() > 200) tls_fingerprint.clear();
+             std::string tls_cert = field("tls_cert");
+             if (tls_cert.size() > 8192) tls_cert.clear();
              struct heartbeat_state {
                bool found = false;
                std::string domain;
@@ -691,13 +792,15 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
              auto state = std::make_shared<heartbeat_state>();
              runtime.executor().write(
                  runtime.device_app().loop(),
-                 [&runtime, id, token, ip, port, version, name, platform, avatar,
-                  local_address, state](uvcpp::uvcpp_db_client& client,
-                                        std::string& error) {
+                 [&runtime, id, token, ip, port, quic_port, tcp_port,
+                  tls_fingerprint, tls_cert, version, name, platform, avatar,
+                  local_address,
+                  state](uvcpp::uvcpp_db_client& client, std::string& error) {
                    const std::string token_hash = sha256_hex(token);
                    if (!runtime.devices().heartbeat(
                            client, runtime.db().dialect(), id, token_hash,
-                           local_address, ip, port, version, name, platform,
+                           local_address, ip, port, quic_port, tcp_port,
+                           tls_fingerprint, tls_cert, version, name, platform,
                            avatar, state->found, error)) {
                      return false;
                    }
@@ -1106,6 +1209,12 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
           body["address"] = same_nat ? record.address : std::string();
           body["peer_ip"] = record.peer_ip;
           body["port"] = record.port;
+          body["quic_port"] = same_nat ? record.quic_port : 0;
+          body["tcp_port"] = same_nat ? record.tcp_port : 0;
+          if (same_nat) {
+            body["tls_fingerprint"] = record.tls_fingerprint;
+            body["tls_cert"] = record.tls_cert;
+          }
           body["version"] = record.version;
           body["platform"] = record.platform;
           body["avatar"] = record.avatar;
@@ -1503,6 +1612,59 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                    out["connect_id"] = allocation.connect_id;
                    out["relay_token"] = allocation.token;
                    out["path"] = "/v1/relay";
+                   // Endpoints the same token opens. The client tries them in
+                   // `preferred` order; the WebSocket path stays the baseline.
+                   json endpoints = json::array();
+                   if (runtime.relay_quic_listening()) {
+                     json quic;
+                     quic["protocol"] = "quic";
+                     quic["port"] = runtime.relay_quic_port();
+                     quic["secure"] = true;
+                     endpoints.push_back(std::move(quic));
+                   }
+                   if (runtime.relay_tcp_listening()) {
+                     json tcp;
+                     tcp["protocol"] = "tcp";
+                     tcp["port"] = runtime.relay_tcp_port();
+                     tcp["secure"] = runtime.relay_tcp_secure();
+                     endpoints.push_back(std::move(tcp));
+                   }
+                   if (runtime.relay_h3_listening()) {
+                     json h3;
+                     h3["protocol"] = "http3";
+                     h3["port"] = runtime.relay_h3_port();
+                     h3["secure"] = true;
+                     endpoints.push_back(std::move(h3));
+                   }
+                   if (runtime.device_app().http2_enabled()) {
+                     // RFC 8441 WebSocket on the device web port, TLS/ALPN h2
+                     // when the listener has a certificate, h2c otherwise.
+                     json h2;
+                     h2["protocol"] = "http2";
+                     h2["port"] = runtime.config().device.port;
+                     h2["secure"] = runtime.device_tls();
+                     endpoints.push_back(std::move(h2));
+                   }
+                   if (runtime.relay_udp_listening()) {
+                     json udp;
+                     udp["protocol"] = "udp";
+                     udp["port"] = runtime.relay_udp_port();
+                     udp["secure"] = false;
+                     endpoints.push_back(std::move(udp));
+                   }
+                   json websocket;
+                   websocket["protocol"] = "websocket";
+                   websocket["path"] = "/v1/relay";
+                   endpoints.push_back(std::move(websocket));
+                   out["relay"]["preferred"] =
+                       json::array({"quic", "http3", "tcp", "http2", "udp",
+                                    "websocket"});
+                   out["relay"]["endpoints"] = std::move(endpoints);
+                   if (!runtime.device_cert_pem().empty()) {
+                     // Clients without a configured CA can pin the relay TLS
+                     // to this certificate.
+                     out["tls_cert"] = runtime.device_cert_pem();
+                   }
                    out["server_time"] = epoch_ms();
                    send_json(response, 200, out);
                    next();
@@ -1520,27 +1682,97 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                                 "missing relay credentials");
                     return;
                   }
+                  auto link = std::make_shared<ws_relay_link>(conn);
                   std::string error;
-                  if (!runtime.relay().attach(conn, *connect_id, *token,
+                  if (!runtime.relay().attach(link.get(), *connect_id, *token,
                                               error)) {
                     conn->close(uvcpp::ws_close_code::POLICY_VIOLATION, error);
                     return;
                   }
-                  conn->on_text([&runtime, conn](const std::string& text) {
-                    runtime.relay().forward(conn, text.data(), text.size(),
-                                            true);
+                  conn->on_text([&runtime, link](const std::string& text) {
+                    runtime.relay().forward(link.get(), text.data(),
+                                            text.size(), true);
                   });
-                  conn->on_binary([&runtime, conn](const std::uint8_t* data,
+                  conn->on_binary([&runtime, link](const std::uint8_t* data,
                                                    std::size_t len) {
                     runtime.relay().forward(
-                        conn, reinterpret_cast<const char*>(data), len, false);
+                        link.get(), reinterpret_cast<const char*>(data), len,
+                        false);
                   });
-                  conn->on_close(
-                      [&runtime, conn](uvcpp::ws_close_code,
-                                       const std::string&) {
-                        runtime.relay().detach(conn);
-                      });
+                  conn->on_close([&runtime, link](uvcpp::ws_close_code,
+                                                  const std::string&) {
+                    runtime.relay().detach(link.get());
+                    link->detach();
+                  });
                 });
+
+  // HTTP/2 WebSocket relay (RFC 8441). Same first-text handshake as the h3
+  // leg: {"connect_id","token"}; after that the hub forwards opaque messages.
+  app.websocket_connect(
+      "/v1/relay",
+      [&runtime](uvcpp::uvcpp_web_ws_request&, uvcpp::uvcpp_web_ws_session& s) {
+        auto link = std::make_shared<web_ws_relay_link>(&s);
+        auto attached = std::make_shared<bool>(false);
+        auto closed = std::make_shared<bool>(false);
+        s.on_text([&runtime, link, attached](const std::string& text) {
+          if (!*attached) {
+            json body;
+            try {
+              body = json::parse(text);
+            } catch (const std::exception&) {
+              link->close_link("relay handshake is not JSON");
+              return;
+            }
+            if (!body.is_object()) {
+              link->close_link("relay handshake is not an object");
+              return;
+            }
+            const std::string connect_id = body.value("connect_id", "");
+            const std::string token = body.value("token", "");
+            if (connect_id.empty() || token.empty()) {
+              link->close_link("relay handshake needs connect_id and token");
+              return;
+            }
+            std::string error;
+            if (!runtime.relay().attach(link.get(), connect_id, token,
+                                        error)) {
+              link->close_link(error.empty() ? "relay attach failed" : error);
+              return;
+            }
+            *attached = true;
+            return;
+          }
+          runtime.relay().forward(link.get(), text.data(), text.size(), true);
+        });
+        s.on_binary([&runtime, link, attached](const std::uint8_t* data,
+                                               std::size_t len) {
+          if (*attached) {
+            runtime.relay().forward(link.get(),
+                                    reinterpret_cast<const char*>(data), len,
+                                    false);
+          }
+        });
+        s.on_close([&runtime, link, attached, closed](
+                       uvcpp::ws_close_code, const std::string&) {
+          if (*closed) return;
+          *closed = true;
+          if (*attached) {
+            runtime.relay().detach(link.get());
+            *attached = false;
+          }
+          link->detach();
+        });
+        s.on_error([&runtime, link, attached, closed](int,
+                                                      const std::string&) {
+          if (*closed) return;
+          *closed = true;
+          if (*attached) {
+            runtime.relay().detach(link.get());
+            *attached = false;
+          }
+          link->detach();
+        });
+      });
 
   app.get("/v1/devices", lookup);
   app.get("/v1/devices/lookup", lookup);

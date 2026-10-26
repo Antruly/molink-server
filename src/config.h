@@ -23,6 +23,15 @@ struct tls_config {
   bool auto_self_signed = true;
 };
 
+/// Data-path relays. Each is advertised to devices in the
+/// POST /v1/connect/relay answer; 0 disables that endpoint.
+struct relay_config {
+  int tcp_port = 28441;
+  int quic_port = 28442;
+  int udp_port = 28443;
+  int http3_port = 28444;
+};
+
 struct database_config {
   std::string driver = "sqlite";
   std::string url;
@@ -44,6 +53,7 @@ struct server_config {
   std::string data_dir = "./molink-server-data";
   listener_config device;
   listener_config admin;
+  relay_config relay;
   tls_config tls;
   database_config database;
   log_config log;

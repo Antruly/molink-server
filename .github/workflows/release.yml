@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 # Releases are tagged `v*` in this repository. Linux and Windows download the
-# prebuilt libuvcpp archive (UVCPP_VERSION, default 1.8.5); macOS builds it
+# prebuilt libuvcpp archive (UVCPP_VERSION, default 1.8.6); macOS builds it
 # from source. Then molink-server and the admin SPA are built.
 jobs:
   linux:
@@ -35,7 +35,7 @@ jobs:
         shell: bash
         env:
           UVCPP_VERSION: ${{ vars.UVCPP_VERSION }}
-        run: ./packaging/fetch-uvcpp.sh linux-x64 "${UVCPP_VERSION:-1.8.5}" "$RUNNER_TEMP/uvcpp"
+        run: ./packaging/fetch-uvcpp.sh linux-x64 "${UVCPP_VERSION:-1.8.6}" "$RUNNER_TEMP/uvcpp"
 
       - name: Build and test molink-server
         shell: bash
@@ -113,7 +113,7 @@ jobs:
         shell: bash
         env:
           UVCPP_VERSION: ${{ vars.UVCPP_VERSION }}
-        run: ./packaging/fetch-uvcpp.sh msvc-x64 "${UVCPP_VERSION:-1.8.5}" "$RUNNER_TEMP/uvcpp"
+        run: ./packaging/fetch-uvcpp.sh msvc-x64 "${UVCPP_VERSION:-1.8.6}" "$RUNNER_TEMP/uvcpp"
 
       - name: Build molink-server
         shell: bash

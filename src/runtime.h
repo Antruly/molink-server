@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include <webapp/uvcpp_web_app.h>
@@ -14,6 +15,10 @@
 #include "security/ban_cache.h"
 #include "security/rate_limiter.h"
 #include "relay.h"
+#include "relay_quic.h"
+#include "relay_h3.h"
+#include "relay_udp.h"
+#include "relay_tcp.h"
 #include "settings_cache.h"
 #include "signaling.h"
 
@@ -49,6 +54,18 @@ class server_runtime {
   rate_limiter& limiter() { return limiter_; }
   signaling_service& signaling() { return signaling_; }
   relay_hub& relay() { return relay_; }
+  bool relay_tcp_listening() const;
+  int relay_tcp_port() const;
+  bool relay_tcp_secure() const;
+  bool relay_quic_listening() const;
+  int relay_quic_port() const;
+  bool relay_udp_listening() const;
+  int relay_udp_port() const;
+  bool relay_h3_listening() const;
+  int relay_h3_port() const;
+  /// PEM of the certificate the device/relay listeners use (empty when TLS is
+  /// off); advertised in the relay response for client pinning.
+  const std::string& device_cert_pem() const { return device_cert_pem_; }
   uvcpp::uvcpp_web_app& device_app() { return device_app_; }
   uvcpp::uvcpp_web_app& admin_app() { return admin_app_; }
   std::atomic<bool>& stopping() { return stopping_; }
@@ -84,6 +101,11 @@ class server_runtime {
   rate_limiter limiter_;
   signaling_service signaling_;
   relay_hub relay_;
+  std::unique_ptr<relay_tcp_server> relay_tcp_;
+  std::unique_ptr<relay_quic_server> relay_quic_;
+  std::unique_ptr<relay_udp_server> relay_udp_;
+  std::unique_ptr<relay_h3_server> relay_h3_;
+  std::string device_cert_pem_;
   uvcpp::uvcpp_web_app device_app_;
   uvcpp::uvcpp_web_app admin_app_;
   std::atomic<bool> stopping_{false};
