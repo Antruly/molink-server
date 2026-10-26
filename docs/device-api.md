@@ -296,7 +296,7 @@ curl -s -X POST 'http://127.0.0.1:28430/v1/devices/unregister' \
 数据库连通性检查，供负载均衡与监控使用。
 
 ```json
-{"status":"ok","service":"moLink Server","version":"0.3.3","database":"ok","devices":0}
+{"status":"ok","service":"moLink Server","version":"0.3.4","database":"ok","devices":0}
 ```
 
 数据库不可用时返回 503，`status` 为 `degraded`。`devices` 是占位字段（目前固定

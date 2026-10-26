@@ -96,6 +96,11 @@ bool relay_hub::allocate(const std::string& connect_id,
       ++it;
     }
   }
+  auto existing = sessions_.find(connect_id);
+  if (existing == sessions_.end() && sessions_.size() >= kMaxSessions) {
+    error = "relay server is busy; try again later";
+    return false;
+  }
   session& value = sessions_[connect_id];
   if (value.created_ms == 0) value.created_ms = now;
   value.connect_id = connect_id;
@@ -193,6 +198,16 @@ void relay_hub::detach(relay_link* link) {
     if (other_link == nullptr) sessions_.erase(it);
   }
   if (other_link != nullptr) other_link->send_notice(kClosedText);
+}
+
+relay_hub::stats_snapshot relay_hub::stats() {
+  stats_snapshot out;
+  std::lock_guard<std::mutex> lock(mutex_);
+  out.sessions = sessions_.size();
+  out.bound = bound_.size();
+  out.dropped = dropped_messages_.load(std::memory_order_relaxed);
+  out.pending_bytes = total_pending_->load(std::memory_order_relaxed);
+  return out;
 }
 
 void relay_hub::close_session(const std::string& connect_id) {

@@ -64,6 +64,16 @@ class relay_hub {
   /// Close both sides (signaling session closed/expired).
   void close_session(const std::string& connect_id);
 
+  /// Diagnostics for /api/health: live pairing sessions, attached links,
+  /// bytes currently queued for a peer, and the total message-drop count.
+  struct stats_snapshot {
+    std::size_t sessions = 0;
+    std::size_t bound = 0;
+    std::uint64_t pending_bytes = 0;
+    std::uint64_t dropped = 0;
+  };
+  stats_snapshot stats();
+
  private:
   /// A peer whose TCP peer stops reading must not make the server buffer an
   /// unbounded stream: libuvcpp's WebSocket send queue has no limit of its
@@ -74,6 +84,10 @@ class relay_hub {
       4u * 1024u * 1024u;
   static constexpr std::uint64_t kMaxTotalBacklogBytes =
       128u * 1024u * 1024u;
+  /// Hard cap on pairing sessions. Each session is a small record, but an
+  /// unattached `POST /v1/connect/relay` flood used to grow the map until the
+  /// ten-minute sweep ran. Reject new pairing once this many are live.
+  static constexpr std::size_t kMaxSessions = 8192;
 
   struct peer {
     std::string device_id;

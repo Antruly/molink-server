@@ -62,7 +62,7 @@
 {
   "node_id": 7,
   "node_uuid": "...",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "applied_revision": 42,
   "devices": {"total": 120, "online": 87},
   "requests_per_minute": 240,

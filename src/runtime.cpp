@@ -273,25 +273,14 @@ bool server_runtime::start(std::string& error) {
       log_warn("%s", relay_error.c_str());
     }
   }
-  if (relay_h3_ && config_.relay.http3_port != 0) {
-    auto started = std::make_shared<std::promise<std::string>>();
-    auto started_future = started->get_future();
-    relay_h3_server* server = relay_h3_.get();
-    const std::string host = config_.device.host;
-    const int port = config_.relay.http3_port;
-    const std::string cert = config_.device.tls_cert;
-    const std::string key = config_.device.tls_key;
-    device_app_.post([server, host, port, cert, key, started] {
-      std::string error;
-      const bool ok = server->start(host, port, cert, key, error);
-      started->set_value(ok ? std::string() : error);
-    });
-    const std::string relay_error = started_future.get();
-    if (relay_error.empty()) {
-      log_info("relay HTTP/3 listening on %s:%d", host.c_str(), port);
-    } else {
-      log_warn("%s", relay_error.c_str());
-    }
+  if (config_.relay.http3_port != 0) {
+    // Keep the HTTP/3 relay endpoint off until libuvcpp caps an HTTP/3
+    // stream's outbound queue: write_stream_data() appends to an unbounded
+    // std::string, and a peer that stops reading lets the relay fill it until
+    // the process is OOM-killed. QUIC, TCP, HTTP/2 and WebSocket all have a
+    // bound, so clients still have reliable relay paths.
+    log_warn("relay HTTP/3 endpoint disabled (no outbound queue bound); "
+             "using QUIC/TCP/HTTP2/WebSocket instead");
   }
   started_ = true;
   started_ms_ = epoch_ms();

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <vector>
 
 #include <cstdlib>
 #include <cstring>
@@ -500,6 +501,7 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                            uvcpp::uvcpp_web_next next) {
     auto result = std::make_shared<json>();
     auto devices = std::make_shared<std::int64_t>(0);
+    const relay_hub::stats_snapshot relay = runtime.relay().stats();
     runtime.executor().read(
         runtime.device_app().loop(),
         [devices](uvcpp::uvcpp_db_client& client, std::string& error) {
@@ -516,12 +518,19 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
           }
           return true;
         },
-        [&response, next, result, devices](bool ok, const std::string&) {
+        [&response, next, result, devices, relay](bool ok,
+                                                  const std::string&) {
           (*result)["status"] = ok ? "ok" : "degraded";
           (*result)["service"] = MOLINK_SERVER_PRODUCT;
           (*result)["version"] = MOLINK_SERVER_VERSION;
           (*result)["database"] = ok ? "ok" : "unavailable";
           (*result)["devices"] = *devices;
+          (*result)["relay"] = {
+              {"sessions", relay.sessions},
+              {"bound", relay.bound},
+              {"pending_bytes", relay.pending_bytes},
+              {"dropped", relay.dropped},
+          };
           send_json(response, ok ? 200 : 503, *result);
           next();
         });
@@ -1629,13 +1638,10 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                      tcp["secure"] = runtime.relay_tcp_secure();
                      endpoints.push_back(std::move(tcp));
                    }
-                   if (runtime.relay_h3_listening()) {
-                     json h3;
-                     h3["protocol"] = "http3";
-                     h3["port"] = runtime.relay_h3_port();
-                     h3["secure"] = true;
-                     endpoints.push_back(std::move(h3));
-                   }
+                   // HTTP/3 is intentionally not advertised: libuvcpp's h3
+                   // stream has no outbound queue bound, so a stalled
+                   // receiver could grow the relay until the process is
+                   // OOM-killed. See the startup log in runtime.cpp.
                    if (runtime.device_app().http2_enabled()) {
                      // RFC 8441 WebSocket on the device web port, TLS/ALPN h2
                      // when the listener has a certificate, h2c otherwise.
@@ -1656,9 +1662,25 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                    websocket["protocol"] = "websocket";
                    websocket["path"] = "/v1/relay";
                    endpoints.push_back(std::move(websocket));
-                   out["relay"]["preferred"] =
-                       json::array({"quic", "http3", "tcp", "http2", "udp",
-                                    "websocket"});
+                   // Only list protocols this instance actually offers; a
+                   // client that follows `preferred` should never try a
+                   // disabled endpoint first.
+                   std::vector<std::string> offered;
+                   for (const json& endpoint : endpoints) {
+                     if (endpoint.contains("protocol") &&
+                         endpoint["protocol"].is_string()) {
+                       offered.push_back(endpoint["protocol"].get<std::string>());
+                     }
+                   }
+                   json preferred = json::array();
+                   for (const char* name : {"quic", "http3", "tcp", "http2",
+                                            "udp", "websocket"}) {
+                     if (std::find(offered.begin(), offered.end(), name) !=
+                         offered.end()) {
+                       preferred.push_back(name);
+                     }
+                   }
+                   out["relay"]["preferred"] = std::move(preferred);
                    out["relay"]["endpoints"] = std::move(endpoints);
                    if (!runtime.device_cert_pem().empty()) {
                      // Clients without a configured CA can pin the relay TLS

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.4] — 2026-10-27
+
+### Fixed
+
+- 修复中继内存无限增长：libuvcpp 的 HTTP/3 流发送队列（`out_pending`）没有
+  上限，对端停止读取时服务端会把数据一直攒到进程被 OOM kill；HTTP/3 中继
+  端点的 done 回调又是立即返回，绕过了 `relay_hub` 的 4 MiB/128 MiB 背压
+  上限。现在**关闭 HTTP/3 中继端点**并从 `/v1/connect/relay` 的 endpoints /
+  preferred 中移除（启动日志会说明原因）；QUIC、TCP、HTTP/2、WebSocket
+  仍有各自的队列上限，客户端会自动改用它们。等 libuvcpp 给 h3 流加上发送
+  队列上限后再恢复。
+- `/v1/connect/relay` 的 `preferred` 现在只列出本实例实际提供的协议，不再
+  指向未启用的端点。
+- 中继配对会话增加 8192 个的硬上限，避免大量未配对的 `POST /v1/connect/relay`
+  在 10 分钟清理窗口内把 `sessions_` 撑大；`/healthz` 与 `/api/health` 新增
+  `relay` 统计（sessions / bound / pending_bytes / dropped），便于确认中继
+  积压。
+
 ## [0.3.3] — 2026-10-27
 
 ### Fixed

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-VERSION=${VERSION:-0.3.3}
+VERSION=${VERSION:-0.3.4}
 WORK=${BUILD_DIR:-$ROOT/build/macos-server}
 STAGE=${STAGE_DIR:-$WORK/root}
 UI=$ROOT/ui
