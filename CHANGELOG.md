@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.3] — 2026-10-27
+
+### Fixed
+
+- macOS 构建失败：`relay_quic.cpp` 无条件包含 libuvcpp 的 QUIC 头，而 macOS
+  CI 从源码构建的 libuvcpp 没有 ngtcp2/nghttp3。现在与 HTTP/3 一样按头文件
+  是否存在决定：缺少 QUIC 时使用无实现的端点，`relay_quic_listening()` 为假，
+  `/v1/connect/relay` 不宣告 quic，其余中继照常可用。
+- 本地验证 QUIC stub 单独编译通过，真实 QUIC 构建与 5/5 测试通过。
+
+0.3.2 的 Linux/Windows 链接修复见下一节。
+
 ## [0.3.2] — 2026-10-27
 
 ### Fixed

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(molink-server VERSION 0.3.2 LANGUAGES CXX)
+project(molink-server VERSION 0.3.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -122,6 +122,14 @@ if(_uvp_prefix AND EXISTS
   set(MOLINK_SERVER_HAVE_H3_WS 1)
 endif()
 
+# The QUIC relay needs libuvcpp built with ngtcp2. The macOS CI build of
+# libuvcpp has no QUIC headers, so compile the endpoint out there.
+set(MOLINK_SERVER_HAVE_QUIC 0)
+if(_uvp_prefix AND EXISTS
+   "${_uvp_prefix}/include/quic/uvcpp_quic_connection.h")
+  set(MOLINK_SERVER_HAVE_QUIC 1)
+endif()
+
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -129,6 +137,11 @@ if(MOLINK_SERVER_HAVE_UDP_RELAY)
   set(MOLINK_SERVER_UDP_SOURCE src/relay_udp.cpp)
 else()
   set(MOLINK_SERVER_UDP_SOURCE src/relay_udp_stub.cpp)
+endif()
+if(MOLINK_SERVER_HAVE_QUIC)
+  set(MOLINK_SERVER_QUIC_SOURCE src/relay_quic.cpp)
+else()
+  set(MOLINK_SERVER_QUIC_SOURCE src/relay_quic_stub.cpp)
 endif()
 
 add_library(molink_server_core STATIC
@@ -148,7 +161,7 @@ add_library(molink_server_core STATIC
   src/signaling.cpp
   src/relay.cpp
   src/relay_tcp.cpp
-  src/relay_quic.cpp
+  ${MOLINK_SERVER_QUIC_SOURCE}
   ${MOLINK_SERVER_UDP_SOURCE}
   src/relay_h3.cpp
   src/admin_api.cpp
@@ -165,6 +178,7 @@ add_library(molink_server_core STATIC
 target_include_directories(molink_server_core PUBLIC src)
 target_compile_definitions(molink_server_core PUBLIC
   MOLINK_SERVER_HAVE_H3_WS=${MOLINK_SERVER_HAVE_H3_WS}
+  MOLINK_SERVER_HAVE_QUIC=${MOLINK_SERVER_HAVE_QUIC}
   MOLINK_SERVER_HAVE_UDP_RELAY=${MOLINK_SERVER_HAVE_UDP_RELAY})
 target_link_libraries(molink_server_core PUBLIC
   ${UVP_UVCPP_TARGET}
