@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.2] — 2026-10-27
+
+### Fixed
+
+- Linux 构建链接失败：预编译 libuvcpp 的 `uvcpp.pc` 未在 `Requires` 中声明
+  libuv，而 UDP 中继端点直接调用 `uv_*`，导致 `undefined reference to
+  uv_udp_recv_stop / uv_ip4_addr / ...`。现在 pkg-config 路径会显式查找并链接
+  系统 libuv；预编译归档路径也会链接系统 libuv。
+- Windows 构建：1.8.6 的 MSVC 归档把 libuv 静态链进 `uvcpp.dll`，没有
+  `uv.lib`；直接再链一个 libuv 会变成两份运行时。现在检测不到 `uv.lib` 时
+  用无实现的 UDP 端点替代，其余中继（WS / TCP / QUIC / HTTP3 / HTTP2）照常
+  可用；`relay_udp_listening()` 为假，`/v1/connect/relay` 不会宣告 udp。
+- 本地用“去掉 `Requires: libuv` 的 uvcpp.pc”强制走 pkg-config 路径复现并验证
+  了完整构建。
+
+0.3.1 的中继数据面功能见下一节。
+
 ## [0.3.1] — 2026-10-27
 
 ### Added

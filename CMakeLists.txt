@@ -1,9 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
-project(molink-server VERSION 0.3.1 LANGUAGES CXX)
+project(molink-server VERSION 0.3.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# The UDP relay endpoint calls libuv directly. A libuvcpp archive that
+# statically links libuv has no uv.lib to link against (Windows), so the
+# endpoint is compiled out there.
+set(MOLINK_SERVER_HAVE_UDP_RELAY 1)
 
 # libuvcpp with WEBAPP (same dependency as molink-core).
 set(MOLINK_UVCPP_PREFIX "" CACHE PATH
@@ -29,6 +34,16 @@ if(MOLINK_UVCPP_PREFIX)
     set_target_properties(uvcpp_prebuilt PROPERTIES
       IMPORTED_IMPLIB "${_uvp_implib}"
       IMPORTED_LOCATION "${_uvp_dll}")
+    find_library(_uvp_uv NAMES uv libuv
+      PATHS "${MOLINK_UVCPP_PREFIX}/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+    if(_uvp_uv)
+      set_target_properties(uvcpp_prebuilt PROPERTIES
+        INTERFACE_LINK_LIBRARIES "${_uvp_uv}")
+    else()
+      set(MOLINK_SERVER_HAVE_UDP_RELAY 0)
+      message(STATUS
+        "molink-server: libuvcpp archive has no uv.lib; UDP relay omitted")
+    endif()
   else()
     find_file(_uvp_so NAMES libuvcpp.so libuvcpp.dylib
       PATHS "${MOLINK_UVCPP_PREFIX}/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
@@ -38,6 +53,15 @@ if(MOLINK_UVCPP_PREFIX)
     endif()
     set_target_properties(uvcpp_prebuilt PROPERTIES
       IMPORTED_LOCATION "${_uvp_so}")
+    find_library(_uvp_uv NAMES uv libuv)
+    if(_uvp_uv)
+      set_target_properties(uvcpp_prebuilt PROPERTIES
+        INTERFACE_LINK_LIBRARIES "${_uvp_uv}")
+    else()
+      set(MOLINK_SERVER_HAVE_UDP_RELAY 0)
+      message(STATUS
+        "molink-server: system libuv not found; UDP relay omitted")
+    endif()
   endif()
   set(UVP_UVCPP_TARGET uvcpp_prebuilt)
   set(_uvp_prefix "${MOLINK_UVCPP_PREFIX}")
@@ -64,6 +88,19 @@ else()
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(UVCPP REQUIRED IMPORTED_TARGET "uvcpp>=1.7.0")
   set(UVP_UVCPP_TARGET PkgConfig::UVCPP)
+  pkg_check_modules(UVLIB QUIET IMPORTED_TARGET libuv)
+  if(UVLIB_FOUND)
+    set(UVP_LIBUV_TARGET PkgConfig::UVLIB)
+  else()
+    find_library(_uvp_uv NAMES uv libuv)
+    if(_uvp_uv)
+      set(UVP_LIBUV_TARGET "${_uvp_uv}")
+    else()
+      set(MOLINK_SERVER_HAVE_UDP_RELAY 0)
+      message(STATUS
+        "molink-server: system libuv not found; UDP relay omitted")
+    endif()
+  endif()
 endif()
 endif()
 
@@ -88,6 +125,12 @@ endif()
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
+if(MOLINK_SERVER_HAVE_UDP_RELAY)
+  set(MOLINK_SERVER_UDP_SOURCE src/relay_udp.cpp)
+else()
+  set(MOLINK_SERVER_UDP_SOURCE src/relay_udp_stub.cpp)
+endif()
+
 add_library(molink_server_core STATIC
   src/util.cpp
   src/logging.cpp
@@ -106,7 +149,7 @@ add_library(molink_server_core STATIC
   src/relay.cpp
   src/relay_tcp.cpp
   src/relay_quic.cpp
-  src/relay_udp.cpp
+  ${MOLINK_SERVER_UDP_SOURCE}
   src/relay_h3.cpp
   src/admin_api.cpp
   src/admin_ui.cpp
@@ -120,10 +163,12 @@ add_library(molink_server_core STATIC
   src/auth/auth_service.cpp
 )
 target_include_directories(molink_server_core PUBLIC src)
-target_compile_definitions(molink_server_core PRIVATE
-  MOLINK_SERVER_HAVE_H3_WS=${MOLINK_SERVER_HAVE_H3_WS})
+target_compile_definitions(molink_server_core PUBLIC
+  MOLINK_SERVER_HAVE_H3_WS=${MOLINK_SERVER_HAVE_H3_WS}
+  MOLINK_SERVER_HAVE_UDP_RELAY=${MOLINK_SERVER_HAVE_UDP_RELAY})
 target_link_libraries(molink_server_core PUBLIC
   ${UVP_UVCPP_TARGET}
+  ${UVP_LIBUV_TARGET}
   OpenSSL::Crypto
   Threads::Threads
 )

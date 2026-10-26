@@ -7,7 +7,7 @@
 moLink 的设备目录与自托管管理服务：客户端在这里注册与心跳，按设备 ID 或域组
 （频道）互相发现，然后建立直连；服务端同时提供 Web 管理控制台、账号与安全策略。
 
-当前版本 **0.3.1**。本仓库独立于桌面客户端
+当前版本 **0.3.2**。本仓库独立于桌面客户端
 （[Antruly/molink](https://github.com/Antruly/molink)），使用自己的 `v*` 标签
 发布，服务端与客户端不再共用版本线。
 
@@ -260,7 +260,7 @@ pnpm build
 
 ## 打包与发布
 
-推送 `v*` 标签（例如 `v0.3.1`）触发
+推送 `v*` 标签（例如 `v0.3.2`）触发
 [`.github/workflows/release.yml`](.github/workflows/release.yml)，在
 Linux / Windows / macOS 上并行构建并上传安装包。CI 需要的仓库变量：
 
