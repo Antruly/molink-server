@@ -90,7 +90,7 @@ cd ui && pnpm install --frozen-lockfile && pnpm build
 # 管理控制台：https://127.0.0.1:28431 （浏览器会提示自签名证书）
 # 设备 API：  https://127.0.0.1:28430
 # 中继：      quic://127.0.0.1:28442（TLS） / tcp://127.0.0.1:28441（TLS）
-#            https://127.0.0.1:28444（HTTP/3 WebSocket）
+#            https://127.0.0.1:28444（HTTP/3 WebSocket；0.3.4 起暂时关闭，见 docs/p2p-relay.md）
 #            udp://127.0.0.1:28443（无连接，丢包由上层修复）
 ```
 

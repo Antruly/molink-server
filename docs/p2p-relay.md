@@ -331,7 +331,7 @@ POST /v1/relay/credentials   (规划)
   `{"type":"relay-ready"}\n`，之后是原始 MOLK 字节流；控制消息已经在
   `packet_type::control` 包里，中继不再区分 text/binary。
 - `quic`：ALPN `molink-relay`，握手与 TCP 相同，跑在一条双向 QUIC 流上（默认端口 28442）。
-- `http3`：`--relay-http3-port`（默认 28444），ALPN `h3`，extended CONNECT（`:protocol=websocket`）；首条文本消息是同一行 JSON 握手，之后按 WS 消息转发（可靠流，不需要分片）。需要 libuvcpp 的 HTTP/3 WebSocket API。
+- `http3`：`--relay-http3-port`（默认 28444），ALPN `h3`，extended CONNECT（`:protocol=websocket`）；首条文本消息是同一行 JSON 握手，之后按 WS 消息转发（可靠流，不需要分片）。需要 libuvcpp 的 HTTP/3 WebSocket API。**0.3.4 起暂时关闭**：libuvcpp 的 h3 流待发队列没有上限，接收端不读时会让服务端内存持续增长；等 libuvcpp 给 h3 流加上队列上限后恢复（当前启动日志会提示，`preferred` 也不会列出 http3）。
 - `udp`：`--relay-udp-port`（默认 28443），首包是同一行 JSON 握手，服务端按源地址配对后原样转发数据报；客户端用与 ICE 相同的 1200 字节标签分片/重组，并按每 2 ms 最多 24 个数据报限速（突发会让服务端接收缓冲溢出）；无重传，丢包由 tile-clock 修复；空闲映射 5 分钟清理。
 
 服务端对每个中继方向限制 4 MiB、全局 128 MiB 的发送积压，超限丢弃并限频告警，
