@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.5] — 2026-10-27
+
+### Fixed
+
+- TCP 中继在写入途中关闭会话时，在途消息的完成回调没有被结算，全局
+  `pending_bytes` 每关一次会话永久多出约 64 KiB；约 2048 次后触发 128 MiB
+  上限，所有中继开始丢包（日志 `relay backlog full`）而实际队列为空。现在
+  `tcp_relay_link` 保存 `in_flight_done_` 并在 `fail_pending()` 中结算。
+- 重新启用 HTTP/3 中继端点（默认 `28444`）：libuvcpp 1.8.8 为
+  extended-CONNECT 流的发送队列加了 4 MiB 上限（超出返回 `UV_ENOBUFS`），
+  接收端停止读取时不会再无限增长到 OOM。`/v1/connect/relay` 重新宣告
+  `http3`，`preferred` 顺序为 QUIC → HTTP3 → TCP → HTTP2 → UDP → WebSocket。
+- 构建改用 libuvcpp 1.8.8，包含 TLS 客户端析构时 `uvcpp_ssl` 的每连接泄漏修复
+  （旧版每个 TLS 连接泄漏约 50–58 KiB，空闲服务每分钟涨 12–14 MB）。
+
 ## [0.3.4] — 2026-10-27
 
 ### Fixed

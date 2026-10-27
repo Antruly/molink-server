@@ -1638,10 +1638,17 @@ void register_device_routes(uvcpp::uvcpp_web_app& app, server_runtime& runtime) 
                      tcp["secure"] = runtime.relay_tcp_secure();
                      endpoints.push_back(std::move(tcp));
                    }
-                   // HTTP/3 is intentionally not advertised: libuvcpp's h3
-                   // stream has no outbound queue bound, so a stalled
-                   // receiver could grow the relay until the process is
-                   // OOM-killed. See the startup log in runtime.cpp.
+                   // HTTP/3 relay. libuvcpp 1.8.8 caps an extended-CONNECT
+                   // stream's outbound queue at 4 MiB, so the endpoint is safe
+                   // to advertise again; the preferred list below keeps it
+                   // ahead of TCP/HTTP2 when both sides can use it.
+                   if (runtime.relay_h3_listening()) {
+                     json h3;
+                     h3["protocol"] = "http3";
+                     h3["port"] = runtime.relay_h3_port();
+                     h3["secure"] = true;
+                     endpoints.push_back(std::move(h3));
+                   }
                    if (runtime.device_app().http2_enabled()) {
                      // RFC 8441 WebSocket on the device web port, TLS/ALPN h2
                      // when the listener has a certificate, h2c otherwise.
