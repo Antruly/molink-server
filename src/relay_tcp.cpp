@@ -173,9 +173,18 @@ class tcp_relay_link final : public relay_link,
   }
 
   void fail_pending() {
+    // The in-flight write is not in `queue_` — `pump()` took it. Its `done`
+    // owns relay_hub's pending accounting, so settle it here too: a close
+    // while a write is in flight otherwise leaks those bytes in the hub's
+    // global counter. After ~2048 such closes the 128 MiB cap trips and every
+    // relay transport starts dropping, although nothing is really queued.
+    writing_ = false;
+    queued_ = 0;
+    auto in_flight = std::move(in_flight_done_);
+    in_flight_done_ = nullptr;
+    if (in_flight) in_flight(-1);
     std::deque<outbound> pending;
     pending.swap(queue_);
-    queued_ = 0;
     for (outbound& entry : pending) {
       if (entry.done) entry.done(-1);
     }
@@ -188,11 +197,16 @@ class tcp_relay_link final : public relay_link,
     queue_.pop_front();
     const std::size_t size = entry.bytes.size();
     auto bytes = std::make_shared<std::string>(std::move(entry.bytes));
-    auto done = std::move(entry.done);
+    in_flight_done_ = std::move(entry.done);
     const int status = client_->write(
-        bytes->data(), bytes->size(), [this, bytes, size, done](int write_status) {
+        bytes->data(), bytes->size(), [this, bytes, size](int write_status) {
+          // `fail_pending()` may have settled this write while it was in
+          // flight (peer gone, link closed); the completion still arrives.
+          if (!writing_) return;
           writing_ = false;
           queued_ -= size;
+          auto done = std::move(in_flight_done_);
+          in_flight_done_ = nullptr;
           if (done) done(write_status);
           if (write_status != 0) {
             fail("relay write failed");
@@ -203,6 +217,8 @@ class tcp_relay_link final : public relay_link,
     if (status != 0) {
       writing_ = false;
       queued_ -= size;
+      auto done = std::move(in_flight_done_);
+      in_flight_done_ = nullptr;
       if (done) done(status);
       fail("relay write failed");
     }
@@ -212,6 +228,9 @@ class tcp_relay_link final : public relay_link,
   relay_hub* hub_;
   std::string handshake_;
   std::deque<outbound> queue_;
+  /// The write handed to the client and not yet completed; its `done` must
+  /// still run even if the link closes first (see `fail_pending`).
+  std::function<void(int)> in_flight_done_;
   std::size_t queued_ = 0;
   bool writing_ = false;
   bool attached_ = false;
